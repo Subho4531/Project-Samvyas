@@ -3,13 +3,13 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "voicellm"
+name = "samvyas"
 version = "0.1.0"
-description = "Research & Production Framework for End-to-End Voice LLMs, Zero-Shot Voice Mimicry, and Emotional Speech Synthesis"
+description = "Samvyas: Multilingual Multimodal Voice Intelligence"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [
-    { name = "VoiceLLM Research Team" }
+    { name = "Samvyas Team" }
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -37,11 +37,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-codecs = [
-    "snac>=0.1.2",
-    "encodec>=0.1.1",
-    "descript-audio-codec>=1.0.0"
-]
 dev = [
     "pytest>=8.0.0",
     "black>=24.0.0",
@@ -51,7 +46,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["voicellm*"]
+include = ["samvyas*"]
 
 [tool.ruff]
 line-length = 100

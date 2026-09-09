@@ -5,7 +5,7 @@ ENV/
 env/
 
 # Distribution / packaging
-/voicellm.egg-info/
+/samvyas.egg-info/
 dist/
 build/
 *.egg-info/
