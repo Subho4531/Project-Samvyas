@@ -1,2 +1,37 @@
-/.venv
-/voicellm.egg-info
+# Environments
+/.venv/
+venv/
+ENV/
+env/
+
+# Distribution / packaging
+/voicellm.egg-info/
+dist/
+build/
+*.egg-info/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Model checkpoints & large binary weights
+*.ckpt
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.onnx
+*.nemo
+tests/indicconformer_extracted/model_weights.ckpt
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local IDE / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
