@@ -1,5 +1,7 @@
 # 🎙️ VoiceLLM: End-to-End Multimodal Voice LLM & Emotional Speech Synthesis
 
+<img src="./public/stt.png">
+
 VoiceLLM is a state-of-the-art research and execution framework designed for building **Zero-Shot Emotional Voice Mimicry and Speech-to-Speech LLMs**. 
 
 Engineered with deep transformer design principles (Rotary Position Embeddings, SwiGLU activations, RMSNorm, KV-cache acceleration, Multi-Codebook Residual Vector Quantization modeling), the repository isolates research, modeling, preprocessing, and inference locally while providing streamlined export recipes for training on **Kaggle GPU/TPU environments**.
