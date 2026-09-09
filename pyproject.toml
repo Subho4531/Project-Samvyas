@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "voicellm"
+version = "0.1.0"
+description = "Research & Production Framework for End-to-End Voice LLMs, Zero-Shot Voice Mimicry, and Emotional Speech Synthesis"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+    { name = "VoiceLLM Research Team" }
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "torch>=2.2.0",
+    "torchaudio>=2.2.0",
+    "transformers>=4.40.0",
+    "accelerate>=0.30.0",
+    "einops>=0.7.0",
+    "soundfile>=0.12.1",
+    "librosa>=0.10.1",
+    "scipy>=1.11.0",
+    "pyyaml>=6.0.1",
+    "pydantic>=2.6.0",
+    "tqdm>=4.66.0",
+    "huggingface_hub>=0.23.0",
+    "wandb>=0.17.0"
+]
+
+[project.optional-dependencies]
+codecs = [
+    "snac>=0.1.2",
+    "encodec>=0.1.1",
+    "descript-audio-codec>=1.0.0"
+]
+dev = [
+    "pytest>=8.0.0",
+    "black>=24.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["voicellm*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

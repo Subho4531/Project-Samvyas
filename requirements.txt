@@ -1,0 +1,23 @@
+# Core Deep Learning & Audio Frameworks
+torch>=2.2.0
+torchaudio>=2.2.0
+transformers>=4.40.0
+accelerate>=0.30.0
+einops>=0.7.0
+
+# Audio Processing & IO
+soundfile>=0.12.1
+librosa>=0.10.1
+scipy>=1.11.0
+
+# Config & Validation
+pyyaml>=6.0.1
+pydantic>=2.6.0
+tqdm>=4.66.0
+
+# Experiment Tracking & Checkpointing
+huggingface_hub>=0.23.0
+wandb>=0.17.0
+
+# Audio Neural Codecs (Optional / Pluggable)
+# pip install snac descript-audio-codec encodec

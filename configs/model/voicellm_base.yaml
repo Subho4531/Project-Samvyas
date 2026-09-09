@@ -1,0 +1,22 @@
+model:
+  vocab_size_text: 32000
+  num_codebooks: 4
+  codebook_vocab_size: 4096
+  hidden_dim: 768
+  intermediate_dim: 2048
+  num_layers: 12
+  num_heads: 12
+  num_kv_heads: 4
+  head_dim: 64
+  max_seq_len: 4096
+  norm_eps: 1.0e-6
+  rope_theta: 10000.0
+  dropout: 0.0
+  speaker_encoder:
+    encoder_type: "ecapa_tdnn"
+    embedding_dim: 256
+  emotion:
+    use_emotion_tokens: true
+    num_emotions: 16
+    emotion_dim: 128
+    prosody_conditioning: true
