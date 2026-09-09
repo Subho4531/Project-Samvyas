@@ -1,27 +1,30 @@
-# 🎙️ VoiceLLM: End-to-End Multimodal Voice LLM & Emotional Speech Synthesis
+# 🎙️ VoiceLLM: End-to-End Multimodal Voice LLM
 
-<img src="./public/stt.png">
+<p align="center">
+  <img src="./public/stt.png" alt="Voice LLM End-to-End Architecture" width="100%">
+</p>
 
-VoiceLLM is a state-of-the-art research and execution framework designed for building **Zero-Shot Emotional Voice Mimicry and Speech-to-Speech LLMs**. 
-
-Engineered with deep transformer design principles (Rotary Position Embeddings, SwiGLU activations, RMSNorm, KV-cache acceleration, Multi-Codebook Residual Vector Quantization modeling), the repository isolates research, modeling, preprocessing, and inference locally while providing streamlined export recipes for training on **Kaggle GPU/TPU environments**.
+VoiceLLM is a state-of-the-art research and execution framework for **Multilingual Speech-to-Speech & Voice Language Models** (supporting Bengali, Hindi, and English).
 
 ---
 
-## 🌟 Key Architectural Pillars
+## 🌟 Architectural Pipeline
 
-1. **Modern Transformer Audio-Language Backbone**
-   - Decoder-only architecture built with RoPE (Rotary Position Embeddings), SwiGLU non-linearities, and RMSNorm.
-   - Unified text-audio vocabulary or interleaved delay-pattern multi-codebook modeling.
+1. **Front-End Audio Enhancement**:
+   - 16 kHz microphone input passed through **DeepFilterNet v2** for real-time background noise removal and speech enhancement.
 
-2. **Zero-Shot Voice Cloning & Speaker Conditioning**
-   - High-capacity neural speaker representations (ECAPA/CAMPPlus/x-vector embeddings) coupled with acoustic reference context prefixing.
+2. **Dual-Stream Audio Perception**:
+   - **Semantic / STT Branch**: Fine-tuned IndicWav2Vec / IndicConformer with CTC/RNNT decode, producing semantic latents ($V_{\text{dim}} = 768$) and transcription tokens.
+   - **Paralinguistic Branch**: IndicWav2Vec acoustic representation modeling acoustics, prosody, emotional inflections, and speech imperfections.
 
-3. **Emotional & Prosodic Controllability**
-   - Support for explicit emotion tokens, reference audio prosody transfer, and acoustic latent conditioning.
+3. **Audio Projector & Downsampler**:
+   - Fuses semantic latents and paralinguistic acoustic embeddings.
+   - Temporal downsampling to optimize sequence length.
+   - Multi-Layer Perceptron (MLP) projection to the LLM hidden dimension ($d = 4096$).
 
-4. **Kaggle Training Decoupling & Export Harness**
-   - Built-in bundler (`voicellm.kaggle.packager`) that compiles the codebase into self-contained training scripts or single-file notebooks ready to run on Kaggle's free T4/P100 GPUs with mixed precision (`torch.cuda.amp`), gradient accumulation, and Hugging Face / WandB checkpointing.
+4. **Transformer Backbone & Speech Synthesis**:
+   - Autoregressive decoder backbone with RoPE, SwiGLU, and RMSNorm.
+   - Neural audio codec token generation for natural speech output.
 
 ---
 
@@ -29,42 +32,33 @@ Engineered with deep transformer design principles (Rotary Position Embeddings, 
 
 ```
 VoiceLLM/
-├── MEMORY.md                   # Live architectural ledger & progress tracking
-├── configs/                    # Model, codec, and training hyperparameter configs
-├── voicellm/
-│   ├── core/                   # Device handling, precision, and config schemas
-│   ├── audio/                  # Audio I/O, spectrograms, loudness normalization
-│   ├── models/                 # Transformer backbone, RVQ heads, conditioning
-│   ├── data/                   # Tokenizers, dataset streaming, audio-text collators
-│   ├── training/               # Multi-codebook cross-entropy losses & optimizers
-│   ├── inference/              # KV-cached generation engine & voice cloning pipeline
-│   ├── eval/                   # Benchmarks (Speaker similarity, WER, audio metrics)
-│   └── kaggle/                 # Kaggle export tools & execution blueprints
-├── scripts/                    # CLI tools for preprocessing, packaging, and inference
-└── tests/                      # Unit tests & shape verification suites
+├── assets/                     # Audio test samples & project media
+│   └── audio/
+├── configs/                    # Model, encoder, and training YAML configs
+├── notebooks/                  # Interactive experimentation & validation notebooks
+├── public/                     # Documentation diagrams & static assets
+│   └── stt.png
+├── tests/                      # Unit and integration test suite
+├── voicellm/                   # Core Python package
+│   ├── audio/                  # Audio I/O and DeepFilterNet denoiser
+│   │   └── denoiser/
+│   ├── models/                 # Neural architectures
+│   │   ├── backbones/          # LLM decoders (RoPE, SwiGLU, RMSNorm)
+│   │   ├── encoders/           # Dual-stream STT & Paralinguistic encoders
+│   │   └── projectors/         # Temporal downsampler & MLP projector
+│   ├── data/                   # Dataset streaming, collators, and tokenizers
+│   └── inference/              # Real-time microphone and inference pipelines
+├── pyproject.toml              # Build system & package specifications
+├── requirements.txt            # Dependency manifest
+└── README.md
 ```
 
 ---
 
 ## 🚀 Quickstart
 
-### 1. Local Setup
 ```bash
-# Clone and create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: .\venv\Scripts\activate
-
-# Install in editable mode
+# Clone & install dependencies
+pip install -r requirements.txt
 pip install -e .
-```
-
-### 2. Packaging for Kaggle Training
-To package the entire codebase and training recipe into a standalone script or notebook for Kaggle:
-```bash
-python scripts/train_kaggle_bundle.py --config configs/train/kaggle_t4_recipe.yaml --output kaggle_train_bundle.py
-```
-
-### 3. Local Verification & Tests
-```bash
-pytest tests/
 ```

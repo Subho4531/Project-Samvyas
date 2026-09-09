@@ -1,7 +1,0 @@
-codec:
-  codec_type: "snac"
-  model_name: "hubertsiuzdak/snac_24khz"
-  num_codebooks: 4
-  codebook_size: 4096
-  sample_rate: 24000
-  token_rate_hz: 12

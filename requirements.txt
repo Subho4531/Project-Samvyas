@@ -5,19 +5,17 @@ transformers>=4.40.0
 accelerate>=0.30.0
 einops>=0.7.0
 
-# Audio Processing & IO
+# Audio Preprocessing, Denoiser & IO
 soundfile>=0.12.1
 librosa>=0.10.1
 scipy>=1.11.0
+deepfilternet>=0.5.6
 
-# Config & Validation
+# Config & Utilities
 pyyaml>=6.0.1
 pydantic>=2.6.0
 tqdm>=4.66.0
 
-# Experiment Tracking & Checkpointing
+# Hub & Checkpointing
 huggingface_hub>=0.23.0
 wandb>=0.17.0
-
-# Audio Neural Codecs (Optional / Pluggable)
-# pip install snac descript-audio-codec encodec
