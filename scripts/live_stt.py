@@ -82,6 +82,11 @@ def run_turn(pipe: STTPipeline, wav: torch.Tensor) -> None:
 
 
 def main() -> int:
+    # Windows consoles default to cp1252, which cannot print Bengali text.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     parser = argparse.ArgumentParser(description="Live mic STT + vector demo (Samvyas Phase 1).")
     parser.add_argument("--secs", type=float, default=5.0, help="Seconds per clip (default 5).")
     parser.add_argument("--once", action="store_true", help="Single clip then exit.")

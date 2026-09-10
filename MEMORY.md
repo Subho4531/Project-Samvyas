@@ -34,4 +34,5 @@ Samvyas/
 - [x] Completely removed legacy `voicellm` folder.
 - [x] Preserved reference research (`notebooks/indic_conformer_test.ipynb`) and audio samples (`assets/audio/`).
 - [x] **Phase 1 (STT-only) implemented & verified 2026-09-10**: `samvyas/audio` (io + DeepFilterNet v2), `samvyas/models/encoders/semantic` (IndicConformer BN, Vdim 768), `samvyas/pipelines/stt_pipeline.py`, configs, `scripts/download_models.py`. 18/18 pytest pass (incl. 2 GPU heavy: real DeepFilter + real .nemo ≤5s clip) on RTX 2050.
+- [x] **Live demo 2026-09-10**: `scripts/live_stt.py` (default-mic 5s clip loop → transcript + pooled 768-vector + sklearn PCA-2D; `--file` dry-run; `--once/--secs/--no-denoise`). Deps added: `sounddevice`, `scikit-learn`; package installed editable (`pip install -e .`). Dry-run verified on `vocaltest.m4a`.
 - [ ] Next: Paralinguistic branch (Phase 4 of plan.md), then Audio Projector d=4096 (Phase 5).
