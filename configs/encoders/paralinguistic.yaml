@@ -1,0 +1,15 @@
+# Paralinguistic branch config (diagram: AI4Bharat IndicWav2Vec acoustics).
+# Checkpoint is access-gated: request access at
+# https://huggingface.co/ai4bharat/indicwav2vec_v1_bengali then run
+# `huggingface-cli login` once; weights cache to ~/.cache/huggingface
+# (git-ignored via *.bin/*.safetensors). Fetch via:
+#   .venv/Scripts/python.exe scripts/download_models.py --include-para --skip-nemo --skip-deepfilter
+repo_id: ai4bharat/indicwav2vec_v1_bengali
+sample_rate: 16000
+layer: last # last | mean_last4
+freeze: true
+include_prosody: true
+device: auto # auto | cuda | cpu
+# Wav2Vec2 front-end: 20ms frames (stride 320 @16kHz); prosody hop matches.
+prosody_hop_length: 320
+prosody_frame_length: 1024

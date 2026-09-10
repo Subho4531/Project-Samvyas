@@ -19,6 +19,7 @@ scikit-learn>=1.3.0 # PCA visualization of 768-dim latents
 pyyaml>=6.0.1
 pydantic>=2.6.0
 tqdm>=4.66.0
+python-dotenv>=1.0.0 # HF_TOKEN from repo .env
 
 # Hub & Checkpointing
 huggingface_hub>=0.23.0

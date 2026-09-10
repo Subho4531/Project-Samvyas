@@ -1,24 +1,27 @@
-"""Live microphone STT demo: default mic -> transcript + 768-dim vector + PCA.
+"""Live dual-stream demo: default mic -> STT + paralinguistic vectors.
 
-Flow (diagram path: Mic 16kHz -> DeepFilterNet v2 -> IndicConformer CTC):
-    record fixed clip from default input -> STTPipeline.process()
-    -> print transcript, hidden-state stats, sklearn PCA-2D of frame latents.
+Flow (diagram: Mic 16kHz -> DeepFilterNet v2 -> STT branch + Para branch):
+    record fixed clip -> STTPipeline (transcript + 768-dim latents)
+                      -> IndicWav2VecEncoder (1024-dim acoustics + prosody)
+    -> print transcript, semantic vector + PCA, acoustic/prosody parameters.
 
 Usage:
     .venv/Scripts/python.exe scripts/live_stt.py                 # 5s clips, loop till Ctrl+C
     .venv/Scripts/python.exe scripts/live_stt.py --once          # single clip then exit
-    .venv/Scripts/python.exe scripts/live_stt.py --secs 4        # custom clip length
-    .venv/Scripts/python.exe scripts/live_stt.py --no-denoise    # skip DeepFilter
-    .venv/Scripts/python.exe scripts/live_stt.py --file assets/audio/vocaltest.m4a  # mic-less dry run
+    .venv/Scripts/python.exe scripts/live_stt.py --no-para       # STT branch only
+    .venv/Scripts/python.exe scripts/live_stt.py --para-device cuda  # para on GPU (OOM risk)
+    .venv/Scripts/python.exe scripts/live_stt.py --file assets/audio/vocaltest.m4a  # dry run
 
 VRAM guard (RTX 2050 4GB): short clips (default 5s), sequential inference,
-torch.cuda.empty_cache() after every turn.
+paralinguistic encoder defaults to CPU (NeMo + DeepFilter already hold the
+GPU), torch.cuda.empty_cache() after every turn.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -26,6 +29,7 @@ import torch
 
 from samvyas.audio.denoiser.deepfilter import DeepFilterDenoiser
 from samvyas.audio.io import TARGET_SR, load_audio
+from samvyas.models.encoders.paralinguistic import IndicWav2VecEncoder
 from samvyas.models.encoders.semantic.indic_asr import IndicASREncoder
 from samvyas.pipelines.stt_pipeline import STTPipeline
 
@@ -46,8 +50,11 @@ def record_clip(secs: float, device=None) -> torch.Tensor:
     return wav
 
 
-def report_vector(hidden: torch.Tensor) -> None:
-    """Print 768-dim latent stats + sklearn StandardScaler/PCA-2D transform."""
+def report_vector(hidden: torch.Tensor) -> int:
+    """Print 768-dim latent stats + sklearn StandardScaler/PCA-2D transform.
+
+    Returns the semantic frame count (alignment target for the para branch).
+    """
     from sklearn.decomposition import PCA
     from sklearn.preprocessing import StandardScaler
 
@@ -62,7 +69,7 @@ def report_vector(hidden: torch.Tensor) -> None:
     n_comp = min(2, t, d)
     if t < 2:
         print("[VEC] Too few frames for PCA — skipping transform.")
-        return
+        return t
     z = StandardScaler().fit_transform(frames)
     pca = PCA(n_components=n_comp)
     coords = pca.fit_transform(z)
@@ -71,14 +78,60 @@ def report_vector(hidden: torch.Tensor) -> None:
     print(f"[VEC] PCA coords first {head} frames (T_frames x 2):")
     for i in range(head):
         print(f"      f{i:04d}: ({coords[i, 0]:+.4f}, {coords[i, 1]:+.4f})")
+    return t
 
 
-def run_turn(pipe: STTPipeline, wav: torch.Tensor) -> None:
+def report_paralinguistic(
+    para_enc: IndicWav2VecEncoder, clean: torch.Tensor, semantic_frames: int
+) -> None:
+    """Run the para branch on cleaned audio and print all other parameters."""
+    out = para_enc.encode(clean, sample_rate=TARGET_SR)
+    a = out.acoustic_embeddings  # (1, T_para, D)
+    b, t_para, d_para = (a.shape[0], a.shape[1], a.shape[2])
+    a_np = a.squeeze(0).double().numpy()
+    pooled = a_np.mean(axis=0)
+    print(f"[PARA] backbone={para_enc.repo_id} layer={para_enc.layer} device={para_enc.device}")
+    print(f"[PARA] acoustic: ({b}, {t_para}, {d_para}), D_acoustic={d_para}")
+    print(f"[PARA] pooled[0:8] = {np.array2string(pooled[:8], precision=4, separator=', ')}")
+    print(f"[PARA] pooled L2={np.linalg.norm(pooled):.4f} mean={pooled.mean():+.4f} std={pooled.std():.4f}")
+
+    if out.prosody_latents is not None:
+        p = out.prosody_latents.squeeze(0).numpy()  # (T, 4): f0_norm, voiced, logE, zcr
+        f0_hz = p[:, 0] * 500.0
+        voiced = p[:, 1] > 0.5
+        print(
+            f"[PARA] prosody: frames={p.shape[0]} voiced_ratio={voiced.mean():.3f} "
+            f"mean_F0={f0_hz[voiced].mean() if voiced.any() else 0.0:.1f}Hz "
+            f"mean_logE={p[:, 2].mean():.4f} mean_ZCR={p[:, 3].mean():.4f}"
+        )
+
+    fused = para_enc.align_to_semantic(out, semantic_frames)
+    msg = (
+        f"[PARA] aligned para_T={t_para} -> semantic_T={semantic_frames}: "
+        f"{tuple(fused.acoustic_embeddings.shape)}"
+    )
+    if fused.prosody_latents is not None:
+        msg += f" + prosody {tuple(fused.prosody_latents.shape)}"
+    print(msg)
+
+
+def run_turn(pipe: STTPipeline, para_enc: IndicWav2VecEncoder | None, wav: torch.Tensor) -> None:
+    timings: dict[str, float] = {}
+
+    t0 = time.perf_counter()
     out = pipe.process(wav, sample_rate=TARGET_SR)
+    timings["stt"] = time.perf_counter() - t0
     print(f"[TXT] {out.transcription.strip() or '(empty transcript)'}")
-    report_vector(out.hidden_states)
+    sem_frames = report_vector(out.hidden_states)
+
+    if para_enc is not None:
+        t0 = time.perf_counter()
+        report_paralinguistic(para_enc, out.cleaned_audio, sem_frames)
+        timings["para"] = time.perf_counter() - t0
+
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
+    print("[TIME] " + " ".join(f"{k}={v:.1f}s" for k, v in timings.items()))
 
 
 def main() -> int:
@@ -87,12 +140,17 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
-    parser = argparse.ArgumentParser(description="Live mic STT + vector demo (Samvyas Phase 1).")
+    parser = argparse.ArgumentParser(description="Live dual-stream demo (STT + paralinguistic).")
     parser.add_argument("--secs", type=float, default=5.0, help="Seconds per clip (default 5).")
     parser.add_argument("--once", action="store_true", help="Single clip then exit.")
     parser.add_argument("--no-denoise", action="store_true", help="Bypass DeepFilterNet.")
+    parser.add_argument("--no-para", action="store_true", help="STT branch only (skip paralinguistic).")
+    parser.add_argument(
+        "--para-device", type=str, default="cpu", help="cpu (safe, default) | cuda (OOM risk on 4GB)."
+    )
+    parser.add_argument("--para-layer", type=str, default="last", help="last | mean_last4.")
     parser.add_argument("--file", type=str, default=None, help="Dry-run on audio file instead of mic.")
-    parser.add_argument("--device", type=str, default="auto", help="auto | cuda | cpu.")
+    parser.add_argument("--device", type=str, default="auto", help="auto | cuda | cpu (STT branch).")
     parser.add_argument("--mic", type=int, default=None, help="sounddevice input device index.")
     args = parser.parse_args()
 
@@ -103,10 +161,17 @@ def main() -> int:
     denoiser = DeepFilterDenoiser(enabled=not args.no_denoise, device=args.device)
     encoder = IndicASREncoder(device=args.device)
     pipe = STTPipeline(denoiser=denoiser, encoder=encoder, device=args.device)
+    para_enc = (
+        None
+        if args.no_para
+        else IndicWav2VecEncoder(layer=args.para_layer, device=args.para_device)  # type: ignore[arg-type]
+    )
 
     if args.file:
         print(f"[FILE] Dry run on {args.file}")
-        run_turn(pipe, load_audio(Path(args.file), target_sr=TARGET_SR))
+        wav = load_audio(Path(args.file), target_sr=TARGET_SR)
+        wav = wav[: int(args.secs * TARGET_SR)]  # same fixed-clip guard as mic mode
+        run_turn(pipe, para_enc, wav)
         return 0
 
     try:
@@ -123,7 +188,7 @@ def main() -> int:
         while True:
             turn += 1
             print(f"\n===== Turn {turn} =====")
-            run_turn(pipe, record_clip(args.secs, device=args.mic))
+            run_turn(pipe, para_enc, record_clip(args.secs, device=args.mic))
             if args.once:
                 break
     except KeyboardInterrupt:

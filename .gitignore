@@ -4,6 +4,10 @@ venv/
 ENV/
 env/
 
+# Secrets (HF tokens etc. — never commit)
+.env
+.env.*
+
 # Distribution / packaging
 /samvyas.egg-info/
 dist/

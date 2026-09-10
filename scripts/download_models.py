@@ -13,12 +13,30 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 
+def _load_env_token() -> None:
+    """Load HF token from repo .env (supports HF_ACESS_TOKEN or HF_TOKEN)."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+    except ImportError:
+        pass
+    tok = os.getenv("HF_ACESS_TOKEN") or os.getenv("HF_TOKEN")
+    if tok and not os.getenv("HF_TOKEN"):
+        os.environ["HF_TOKEN"] = tok
+
+
+_load_env_token()
+
+
 REPO_ID = "ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large"
 FILENAME = "indicconformer_stt_bn_hybrid_rnnt_large.nemo"
+PARA_REPO_ID = "ai4bharat/indicwav2vec_v1_bengali"
 
 
 def fetch_nemo(repo_id: str = REPO_ID, filename: str = FILENAME) -> Path:
@@ -37,6 +55,27 @@ def fetch_nemo(repo_id: str = REPO_ID, filename: str = FILENAME) -> Path:
         print(f"[INFO] Checkpoint at: {path} (size via link, verifying blob...)")
     else:
         print(f"[SUCCESS] Checkpoint at: {path} ({size_mb:.1f} MB)")
+    return path
+
+
+def fetch_paralinguistic(repo_id: str = PARA_REPO_ID) -> Path | None:
+    """Fetch the IndicWav2Vec backbone (gated repo — needs HF access).
+
+    Returns the snapshot path, or None with guidance if access is missing.
+    """
+    from huggingface_hub import snapshot_download
+    from huggingface_hub.errors import GatedRepoError
+
+    print(f"[INFO] Fetching paralinguistic backbone '{repo_id}'...")
+    try:
+        path = Path(snapshot_download(repo_id=repo_id))
+    except GatedRepoError:
+        print(
+            f"[WARN] Gated repo: request access at https://huggingface.co/{repo_id} "
+            "then run `huggingface-cli login` and re-run this script."
+        )
+        return None
+    print(f"[SUCCESS] Paralinguistic checkpoint at: {path}")
     return path
 
 
@@ -65,10 +104,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Prefetch Samvyas Phase-1 model weights.")
     parser.add_argument("--skip-deepfilter", action="store_true", help="Skip DeepFilter warmup.")
     parser.add_argument("--skip-nemo", action="store_true", help="Skip NeMo checkpoint fetch.")
+    parser.add_argument("--skip-para", action="store_true", help="Skip paralinguistic backbone fetch.")
+    parser.add_argument(
+        "--include-para", action="store_true", help="Also fetch the (gated) IndicWav2Vec backbone."
+    )
     args = parser.parse_args()
 
     if not args.skip_nemo:
         fetch_nemo()
+    if args.include_para and not args.skip_para:
+        fetch_paralinguistic()
     if not args.skip_deepfilter:
         warmup_deepfilter()
     print("[DONE] All requested model caches are ready.")

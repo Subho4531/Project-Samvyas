@@ -40,6 +40,7 @@ Samvyas/
 .\.venv\Scripts\python.exe scripts/download_models.py
 
 # Live mic demo: 5s clips from default mic, loop till Ctrl+C
+# (STT transcript + 768-vector/PCA + paralinguistic acoustics/prosody)
 .\.venv\Scripts\python.exe scripts/live_stt.py
 
 # Mic-less dry run on a sample file
