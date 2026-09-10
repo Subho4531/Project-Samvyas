@@ -1,7 +1,7 @@
 # Samvyas: STT & Dual-Stream Perception Implementation Plan
 
 > **Scope**: Implementation plan for the Speech-to-Text (STT) and Dual-Stream Audio Perception frontend mapped to [`public/stt.png`](./public/stt.png).  
-> **Status**: Ready for review (No code written yet).
+> **Status**: Phase 1 (STT-only: denoiser + Bengali semantic branch + pipeline) implemented & verified — 18/18 tests pass on RTX 2050 (see MEMORY.md).
 
 ---
 

@@ -1,0 +1,10 @@
+# Semantic / STT branch config (diagram: fine-tuned IndicConformer + CTC/RNNT decode).
+# Checkpoint fetched via huggingface_hub and cached in ~/.cache/huggingface — never committed.
+repo_id: ai4bharat/indicconformer_stt_bn_hybrid_ctc_rnnt_large
+filename: indicconformer_stt_bn_hybrid_rnnt_large.nemo
+decoder: ctc # ctc (default, stable) | rnnt
+sample_rate: 16000
+hidden_dim: 768 # Vdim — strict contract, do not change
+freeze_encoder: true
+device: auto # auto | cuda | cpu
+batch_size: 1

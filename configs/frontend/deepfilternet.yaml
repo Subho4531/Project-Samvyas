@@ -1,0 +1,15 @@
+# DeepFilterNet v2 denoiser config (diagram: noise removal block).
+# Weights are fetched on first use via df.enhance.init_df and cached
+# externally — never committed (see .gitignore *.pt/*.ckpt).
+model_base_dir: null # null = pretrained DeepFilterNet2 per df docs
+default_model: DeepFilterNet2
+epoch: best
+post_filter: false
+mask_only: false
+sample_rate: 16000
+enabled: true
+# Chunked streaming inference (seconds per chunk, 0 = whole utterance)
+chunk_secs: 0
+atten_lim_db: null
+log_level: INFO
+log_file: null # null disables enhance.log creation
