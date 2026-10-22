@@ -1,0 +1,40 @@
+# StyleTTS 2 Bengali Configuration for Samvyas
+# Speaker Voice Twin: Jeet
+
+audio:
+  sample_rate: 24000
+  export_sample_rate: 16000
+  n_fft: 1024
+  win_length: 1024
+  hop_length: 256
+  n_mels: 80
+  f_min: 0.0
+  f_max: 12000.0
+
+model:
+  hidden_dim: 512
+  style_dim: 64
+  num_heads: 4
+  num_layers: 6
+  max_seq_len: 1024
+  phoneme_vocab_size: 64
+  speaker_dim: 64
+  multispeaker: false
+
+emotions:
+  supported:
+    - neutral
+    - warm
+    - excited
+    - whisper
+    - serious
+    - inquisitive
+  default: neutral
+  style_bank_path: "configs/tts/style_bank.pt"
+
+inference:
+  device: "cuda"
+  fp16: true
+  temperature: 0.7
+  length_scale: 1.0
+  pitch_shift: 0.0

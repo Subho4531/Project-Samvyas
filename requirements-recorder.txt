@@ -1,0 +1,5 @@
+# Lightweight microphone collection only; no STT models, PyTorch, or GPU needed.
+numpy>=1.24.0,<3
+sounddevice>=0.5.0,<1
+soundfile>=0.12.1,<1
+scipy>=1.11.0,<2

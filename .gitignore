@@ -1,4 +1,13 @@
 # Environments
+/.venv-kaggle/
+/.venv-tts/
+/.venv-verify/
+/.venv-recorder/
+/.venv-styletts2/
+/assets/audio/voice_dataset/
+/assets/audio/voice_users/
+/outputs/tts/
+/configs/tts/recordings/
 /.venv/
 venv/
 ENV/

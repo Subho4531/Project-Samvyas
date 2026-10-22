@@ -1,0 +1,17 @@
+# StyleTTS 2 Bengali Environment Requirements
+# Install in dedicated environment (e.g. .venv-styletts2)
+# NEVER mix with .venv (STT) or .venv-tts (IndicF5)
+
+torch>=2.2.0,<2.6; sys_platform != 'darwin'
+torchaudio>=2.2.0,<2.6; sys_platform != 'darwin'
+numpy>=1.24.0,<2.1.0
+scipy>=1.11.0
+soundfile>=0.12.1
+librosa>=0.10.1
+munch>=4.0.0
+pyyaml>=6.0.1
+einops>=0.7.0
+nltk>=3.8.1
+transformers>=4.40.0,<4.50.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0

@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Samvyas Voice Chat</title>
+<style>
+  body { font-family: system-ui, "Nirmala UI", sans-serif; max-width: 720px; margin: 2em auto; padding: 0 1em; }
+  #log { border: 1px solid #ccc; min-height: 300px; max-height: 50vh; overflow-y: auto; padding: 1em; margin-bottom: 1em; }
+  .user { text-align: right; color: #0b5fff; margin: 0.5em 0; }
+  .model { text-align: left; color: #1a1a1a; margin: 0.5em 0; }
+  .meta { color: #888; font-size: 0.85em; }
+  #controls { display: flex; gap: 0.5em; margin-bottom: 0.5em; }
+  #text { flex: 1; padding: 0.5em; }
+  button { padding: 0.5em 1em; }
+  #interim { color: #888; min-height: 1.5em; }
+  #playOverlay {
+    display: none; position: fixed; bottom: 1.5em; left: 50%; transform: translateX(-50%);
+    padding: 0.8em 1.6em; font-size: 1.1em; background: #0b5fff; color: #fff;
+    border: none; border-radius: 2em; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<h1>Samvyas Voice Chat</h1>
+<p id="status" class="meta">Starting…</p>
+<div id="log" aria-live="polite"></div>
+<div id="interim" aria-live="polite"></div>
+<div id="controls">
+  <button id="talk" type="button">🎙 Talk</button>
+  <input id="text" type="text" placeholder="Type in Bengali, or talk…" autocomplete="off">
+  <button id="send" type="button">Send</button>
+  <button id="reset" type="button">Reset</button>
+</div>
+<button id="playOverlay" type="button">🔊 Tap to hear reply</button>
+<script>
+"use strict";
+const log = document.getElementById("log");
+const interim = document.getElementById("interim");
+const statusEl = document.getElementById("status");
+const talkBtn = document.getElementById("talk");
+const sendBtn = document.getElementById("send");
+const textInput = document.getElementById("text");
+let sending = false;
+let serverSTT = false;
+
+fetch("/api/health").then((r) => r.json()).then((h) => {
+  serverSTT = !!h.stt;
+  statusEl.textContent = "Model " + h.model + " · context " + h.history_limit +
+    " msgs · TTS " + (h.tts ? "on" : "off") + " · STT " +
+    (serverSTT ? "server (our pipeline)" : "browser") + ".";
+  setupTalk();
+}).catch(() => { statusEl.textContent = "Server unreachable."; });
+
+function bubble(cls, text) {
+  const p = document.createElement("p");
+  p.className = cls;
+  p.textContent = text;
+  log.appendChild(p);
+  log.scrollTop = log.scrollHeight;
+}
+
+const audioQueue = [];
+let playing = false;
+const playOverlay = document.getElementById("playOverlay");
+playOverlay.addEventListener("click", () => {
+  playOverlay.style.display = "none";
+  playing = false;
+  playNext();
+});
+
+function playNext() {
+  if (playing || audioQueue.length === 0) return;
+  playing = true;
+  const audio = document.createElement("audio");
+  audio.controls = true;
+  audio.preload = "auto";
+  audio.src = audioQueue.shift();
+  audio.onended = () => { playing = false; playNext(); };
+  audio.onerror = () => { playing = false; playNext(); };
+  log.appendChild(audio);
+  log.scrollTop = log.scrollHeight;
+  audio.play().then(() => {
+    playOverlay.style.display = "none";
+  }).catch((err) => {
+    playing = false;
+    if (err && err.name === "NotAllowedError") {
+      // Reply arrived after the click gesture expired: re-queue and wait
+      // for an explicit tap, which grants fresh playback permission.
+      audioQueue.unshift(audio.src);
+      playOverlay.style.display = "block";
+    } else {
+      playNext();
+    }
+  });
+}
+
+async function streamTurn(turn, replyEl) {
+  await new Promise((resolve, reject) => {
+    const source = new EventSource("/api/stream?turn=" + turn);
+    let finished = false;
+    source.onmessage = (event) => {
+      if (finished) return;
+      let msg = {};
+      try { msg = JSON.parse(event.data); } catch (err) { return; }
+      if (msg.token) {
+        replyEl.textContent += msg.token;
+        log.scrollTop = log.scrollHeight;
+      }
+      if (msg.audio) {
+        audioQueue.push("/api/audio?file=" + encodeURIComponent(msg.audio));
+        playNext();
+      }
+      if (msg.done || msg.error) {
+        finished = true;
+        source.close();
+        if (msg.error) reject(new Error(msg.error));
+        else resolve();
+      }
+    };
+    source.onerror = () => {
+      if (finished) return;
+      finished = true;
+      source.close();
+      reject(new Error("Stream broke."));
+    };
+  });
+}
+
+function beginTurn(userText) {
+  bubble("user", userText);
+  const replyEl = document.createElement("p");
+  replyEl.className = "model";
+  log.appendChild(replyEl);
+  return replyEl;
+}
+
+async function send(text) {
+  text = (text || "").trim();
+  if (!text || sending) return;
+  sending = true;
+  textInput.value = "";
+  talkBtn.disabled = true;
+  sendBtn.disabled = true;
+  const replyEl = beginTurn(text);
+  try {
+    const res = await fetch("/api/chat_stream", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({text: text}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    await streamTurn(data.turn, replyEl);
+    if (!replyEl.textContent) replyEl.remove();
+  } catch (err) {
+    if (!replyEl.textContent) replyEl.remove();
+    bubble("model", "⚠ " + err.message);
+  } finally {
+    sending = false;
+    talkBtn.disabled = false;
+    sendBtn.disabled = false;
+  }
+}
+
+async function sendVoice(blob) {
+  if (sending) return;
+  sending = true;
+  talkBtn.disabled = true;
+  sendBtn.disabled = true;
+  try {
+    interim.textContent = "Transcribing with our STT…";
+    const res = await fetch("/api/voice", {method: "POST", body: blob});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    interim.textContent = "";
+    const replyEl = beginTurn("🎙 " + data.transcript);
+    await streamTurn(data.turn, replyEl);
+    if (!replyEl.textContent) replyEl.remove();
+  } catch (err) {
+    interim.textContent = "";
+    bubble("model", "⚠ " + err.message);
+  } finally {
+    sending = false;
+    talkBtn.disabled = false;
+    sendBtn.disabled = false;
+  }
+}
+
+sendBtn.addEventListener("click", () => send(textInput.value));
+textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") send(textInput.value); });
+document.getElementById("reset").addEventListener("click", async () => {
+  await fetch("/api/reset", {method: "POST"});
+  log.innerHTML = "";
+  bubble("model", "Context cleared. কী নিয়ে কথা বলব?");
+});
+
+function wavBlob(chunks, rate) {
+  const length = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const samples = new Float32Array(length);
+  let offset = 0;
+  chunks.forEach((chunk) => { samples.set(chunk, offset); offset += chunk.length; });
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const text = (position, value) => [...value].forEach((letter, index) => view.setUint8(position + index, letter.charCodeAt(0)));
+  text(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); text(8, "WAVE");
+  text(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true); view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true);
+  view.setUint16(32, 2, true); view.setUint16(34, 16, true); text(36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, index) => {
+    const clipped = Math.max(-1, Math.min(1, sample));
+    view.setInt16(44 + index * 2, clipped < 0 ? clipped * 32768 : clipped * 32767, true);
+  });
+  return new Blob([buffer], {type: "audio/wav"});
+}
+
+const workletSource = `
+  class ChatCaptureProcessor extends AudioWorkletProcessor {
+    constructor() {
+      super();
+      this.frames = [];
+      this.frameCount = 0;
+      this.port.onmessage = (event) => { if (event.data === "flush") this.flush(true); };
+    }
+    flush(notify = false) {
+      if (this.frameCount) {
+        const packet = new Float32Array(this.frameCount);
+        let offset = 0;
+        for (const frame of this.frames) { packet.set(frame, offset); offset += frame.length; }
+        this.port.postMessage(packet, [packet.buffer]);
+        this.frames = [];
+        this.frameCount = 0;
+      }
+      if (notify) this.port.postMessage("flushed");
+    }
+    process(inputs) {
+      const input = inputs[0];
+      if (input && input[0]) {
+        const copy = input[0].slice();
+        this.frames.push(copy);
+        this.frameCount += copy.length;
+        if (this.frameCount >= 4096) this.flush();
+      }
+      return true;
+    }
+  }
+  registerProcessor("chat-capture", ChatCaptureProcessor);
+`;
+
+let capture = null;
+
+async function startServerCapture() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {channelCount: {ideal: 1}, sampleRate: {ideal: 48000}, echoCancellation: false, noiseSuppression: false, autoGainControl: false},
+  });
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  let context;
+  try { context = new AudioContextClass({sampleRate: 48000, latencyHint: "interactive"}); }
+  catch (err) { context = new AudioContextClass({latencyHint: "interactive"}); }
+  await context.audioWorklet.addModule(URL.createObjectURL(new Blob([workletSource], {type: "text/javascript"})));
+  const source = context.createMediaStreamSource(stream);
+  const node = new window.AudioWorkletNode(context, "chat-capture", {numberOfInputs: 1, numberOfOutputs: 0, channelCount: 1, channelCountMode: "explicit"});
+  const chunks = [];
+  node.port.onmessage = (event) => {
+    if (event.data instanceof Float32Array) chunks.push(event.data);
+    if (event.data === "flushed" && capture && capture.flushResolve) {
+      capture.flushResolve();
+      capture.flushResolve = null;
+    }
+  };
+  source.connect(node);
+  capture = {stream, context, node, chunks, rate: context.sampleRate};
+  const stopTimer = setTimeout(() => stopServerCapture(), 30000);
+  capture.stopTimer = stopTimer;
+}
+
+async function stopServerCapture() {
+  if (!capture) return;
+  const done = capture;
+  capture = null;
+  clearTimeout(done.stopTimer);
+  talkBtn.textContent = "🎙 Talk";
+  interim.textContent = "Sending…";
+  try {
+    await new Promise((resolve) => {
+      done.flushResolve = resolve;
+      setTimeout(resolve, 2000);
+      done.node.port.postMessage("flush");
+    });
+    done.stream.getTracks().forEach((track) => track.stop());
+    await done.context.close();
+    await sendVoice(wavBlob(done.chunks, done.rate));
+  } catch (err) {
+    interim.textContent = "";
+    bubble("model", "⚠ " + err.message);
+  }
+}
+
+function setupTalk() {
+  if (serverSTT && navigator.mediaDevices?.getUserMedia && (window.AudioContext || window.webkitAudioContext) && window.AudioWorkletNode) {
+    talkBtn.addEventListener("click", async () => {
+      if (sending) return;
+      if (capture) { await stopServerCapture(); return; }
+      talkBtn.textContent = "⏹ Stop";
+      try { await startServerCapture(); }
+      catch (err) {
+        talkBtn.textContent = "🎙 Talk";
+        interim.textContent = "Microphone blocked — allow it or type.";
+      }
+    });
+    return;
+  }
+  setupBrowserRecognition();
+}
+
+function setupBrowserRecognition() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    talkBtn.disabled = true;
+    talkBtn.title = "Voice input needs Chrome or Edge — type instead.";
+    return;
+  }
+  const recog = new SpeechRecognition();
+  recog.lang = "bn-IN";
+  recog.interimResults = true;
+  recog.maxAlternatives = 1;
+  let listening = false;
+  recog.onresult = (event) => {
+    let finalText = "";
+    let interimText = "";
+    for (const result of event.results) {
+      if (result.isFinal) finalText += result[0].transcript;
+      else interimText += result[0].transcript;
+    }
+    interim.textContent = interimText;
+    if (finalText) { interim.textContent = ""; send(finalText); }
+  };
+  recog.onerror = (event) => {
+    interim.textContent = "";
+    listening = false;
+    talkBtn.textContent = "🎙 Talk";
+    if (event.error === "not-allowed") interim.textContent = "Microphone blocked — allow it or type.";
+  };
+  recog.onend = () => {
+    interim.textContent = "";
+    listening = false;
+    talkBtn.textContent = "🎙 Talk";
+  };
+  talkBtn.addEventListener("click", () => {
+    if (listening) { recog.stop(); return; }
+    listening = true;
+    talkBtn.textContent = "⏹ Stop";
+    try { recog.start(); } catch (err) { listening = false; talkBtn.textContent = "🎙 Talk"; }
+  });
+}
+</script>
+</body>
+</html>

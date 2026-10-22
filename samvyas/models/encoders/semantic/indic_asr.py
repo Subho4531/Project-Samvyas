@@ -41,6 +41,7 @@ class IndicASREncoder(nn.Module):
         decoder: str = "ctc",
         freeze_encoder: bool = True,
         device: str = "auto",
+        lang: str = "bn",
     ) -> None:
         super().__init__()
         if decoder not in ("ctc", "rnnt"):
@@ -52,6 +53,7 @@ class IndicASREncoder(nn.Module):
         self.filename = filename
         self.decoder = decoder
         self.freeze_encoder = freeze_encoder
+        self.lang = lang
         self._nemo_path = Path(nemo_path) if nemo_path else None
         self._model = None
         self._adapter: Optional[nn.Module] = None  # lazy d_model -> 768
@@ -60,13 +62,31 @@ class IndicASREncoder(nn.Module):
 
     # -- loading -------------------------------------------------------
     def _resolve_checkpoint(self) -> Path:
+        import os
+
+        try:
+            from dotenv import load_dotenv
+
+            load_dotenv()
+        except (ImportError, OSError):
+            pass
+        tok = os.getenv("HF_TOKEN") or os.getenv("HF_ACESS_TOKEN")
+        if tok and not os.getenv("HF_TOKEN"):
+            os.environ["HF_TOKEN"] = tok
+
+        override = os.getenv("SAMVYAS_NEMO_PATH")
+        if override:
+            path = Path(override)
+            if not path.exists():
+                raise FileNotFoundError(f"SAMVYAS_NEMO_PATH not found: {path}")
+            return path
         if self._nemo_path is not None:
             if not self._nemo_path.exists():
                 raise FileNotFoundError(f"NeMo checkpoint not found: {self._nemo_path}")
             return self._nemo_path
         from huggingface_hub import hf_hub_download
 
-        return Path(hf_hub_download(repo_id=self.repo_id, filename=self.filename))
+        return Path(hf_hub_download(repo_id=self.repo_id, filename=self.filename, token=tok))
 
     def load(self) -> "IndicASREncoder":
         """Restore the NeMo model (downloads on first call via HF cache)."""
@@ -84,8 +104,49 @@ class IndicASREncoder(nn.Module):
             self._model.freeze()
         self._model.eval()
         self._model.change_decoding_strategy(decoder_type=self.decoder, verbose=False)
+        self._default_aggregate_lang()
         # Adapter lives on the same device as the encoder output.
         return self
+
+    def _default_aggregate_lang(self) -> None:
+        """Give NeMo 2.x CTC decoding the language the aggregate tokenizer needs.
+
+        The checkpoint's multilingual tokenizer decodes per language, but the
+        CTC beam path calls `tokens_to_text(tokens)` without one. Default it
+        to this encoder's language (instance-level patch; site-packages
+        untouched). Raises for unknown languages instead of mis-decoding.
+        """
+        from types import MethodType
+
+        try:
+            from nemo.collections.common.tokenizers.aggregate_tokenizer import (
+                AggregateTokenizer,
+            )
+        except ImportError:
+            return
+        tokenizer = self._model.tokenizer
+        if not isinstance(tokenizer, AggregateTokenizer):
+            return
+        if self.lang not in tokenizer.langs:
+            raise ValueError(
+                f"Language {self.lang!r} not in aggregate tokenizer; "
+                f"choose from {sorted(tokenizer.langs)}."
+            )
+        original = tokenizer.tokens_to_text  # noqa: F841 — kept for intent clarity  # noqa: F841 — kept for intent clarity
+
+        def tokens_to_text(instance, tokens, lang_id=None):
+            # NeMo 2.7's aggregate tokens_to_text calls a removed
+            # `decode_pieces` API; route straight to the language sub-tokenizer.
+            lang = lang_id or self.lang
+            sub = instance.tokenizers_dict.get(lang)
+            if sub is None:
+                raise ValueError(
+                    f"Language {lang!r} not in aggregate tokenizer; "
+                    f"choose from {sorted(instance.langs)}."
+                )
+            return sub.tokens_to_text(tokens)
+
+        tokenizer.tokens_to_text = MethodType(tokens_to_text, tokenizer)
 
     @property
     def model(self):

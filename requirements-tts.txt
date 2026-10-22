@@ -1,0 +1,13 @@
+# Install ONLY in .venv-tts (Python 3.10/3.11); do not alter the STT environment.
+# Pinned AI4Bharat source exposes load_model and infer_batch_process.
+f5_tts @ git+https://github.com/AI4Bharat/IndicF5.git@13f7c4d627cc10111aea8fe9c0039462cacacdc7
+numpy==1.26.4
+transformers==4.49.0
+# Older datasets releases fail to import against modern PyArrow.
+datasets>=3.6.0,<4
+huggingface_hub>=0.26.0,<1.0
+torch>=2.2.0,<2.6
+torchaudio>=2.2.0,<2.6
+soundfile>=0.12.1
+scipy>=1.11.0
+python-dotenv>=1.0.0
