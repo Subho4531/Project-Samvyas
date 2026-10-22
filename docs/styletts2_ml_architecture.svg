@@ -1,0 +1,166 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1550 820" width="100%" height="100%" style="background-color: #0b1120; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <filter id="shadow" x="-5%" y="-5%" width="110%" height="115%" filterUnits="userSpaceOnUse">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feOffset dx="0" dy="6" result="offset"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <marker id="m-blue" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#60a5fa"/></marker>
+    <marker id="m-cyan" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#38bdf8"/></marker>
+    <marker id="m-pink" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#f472b6"/></marker>
+    <marker id="m-amber" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#fbbf24"/></marker>
+    <marker id="m-green" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#4ade80"/></marker>
+    <marker id="m-purple" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#c084fc"/></marker>
+    <marker id="m-slate" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M 0 0 L 8 4 L 0 8 Z" fill="#94a3b8"/></marker>
+
+    <!-- Gradients -->
+    <linearGradient id="g-text" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a" stop-opacity="0.9"/><stop offset="100%" stop-color="#2563eb" stop-opacity="0.6"/>
+    </linearGradient>
+    <linearGradient id="g-dur" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#164e63" stop-opacity="0.9"/><stop offset="100%" stop-color="#0891b2" stop-opacity="0.6"/>
+    </linearGradient>
+    <linearGradient id="g-style" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#831843" stop-opacity="0.9"/><stop offset="100%" stop-color="#db2777" stop-opacity="0.6"/>
+    </linearGradient>
+    <linearGradient id="g-pro" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#78350f" stop-opacity="0.9"/><stop offset="100%" stop-color="#d97706" stop-opacity="0.6"/>
+    </linearGradient>
+    <linearGradient id="g-gen" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#064e3b" stop-opacity="0.95"/><stop offset="100%" stop-color="#16a34a" stop-opacity="0.7"/>
+    </linearGradient>
+    <linearGradient id="g-voc" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4c1d95" stop-opacity="0.9"/><stop offset="100%" stop-color="#7c3aed" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Title -->
+  <text x="60" y="55" fill="#f8fafc" font-size="27" font-weight="700" letter-spacing="-0.5px">StyleTTS 2 Deep Learning Architecture (ML Internal Diagram)</text>
+  <text x="60" y="85" fill="#94a3b8" font-size="14" font-weight="400">Decoupled Neural Speech Synthesis: Bengali G2P ➔ Duration Expansion ➔ AdaIN ResBlock Generator ➔ Vocos</text>
+
+  <!-- 1. Text Encoder -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="120" width="260" height="200" rx="12" fill="url(#g-text)" stroke="#60a5fa" stroke-width="2"/>
+    <rect x="75" y="135" width="230" height="30" rx="6" fill="#1d4ed8" fill-opacity="0.5"/>
+    <text x="88" y="156" fill="#eff6ff" font-size="15" font-weight="700">1. Bengali Text Encoder</text>
+    <text x="75" y="190" fill="#bfdbfe" font-size="12" font-weight="600">Input: IPA Phonemes</text>
+    <text x="75" y="210" fill="#f8fafc" font-size="12">• Phoneme Embedding (D=512)</text>
+    <text x="75" y="230" fill="#f8fafc" font-size="12">• Multi-layer Transformer / PL-BERT</text>
+    <text x="75" y="250" fill="#f8fafc" font-size="12">• Bi-directional Self-Attention</text>
+    <text x="75" y="275" fill="#60a5fa" font-size="12" font-weight="700">Output: H_text ∈ ℝ^(B × T_text × 512)</text>
+  </g>
+
+  <!-- Arrow 1 -> 2 -->
+  <path d="M 320 220 L 370 220" stroke="#60a5fa" stroke-width="2.5" fill="none" marker-end="url(#m-blue)"/>
+  <text x="325" y="210" fill="#60a5fa" font-size="11" font-weight="600">H_text</text>
+
+  <!-- 2. Alignment & Duration Regulator -->
+  <g filter="url(#shadow)">
+    <rect x="380" y="120" width="280" height="200" rx="12" fill="url(#g-dur)" stroke="#38bdf8" stroke-width="2"/>
+    <rect x="395" y="135" width="250" height="30" rx="6" fill="#0e7490" fill-opacity="0.5"/>
+    <text x="408" y="156" fill="#ecfeff" font-size="15" font-weight="700">2. Duration &amp; Alignment</text>
+    <text x="395" y="190" fill="#a5f3fc" font-size="12" font-weight="600">Conditioned on: H_text &amp; Style s</text>
+    <text x="395" y="210" fill="#f8fafc" font-size="12">• Duration Predictor (Bi-GRU)</text>
+    <text x="395" y="230" fill="#f8fafc" font-size="12">• Predicts discrete durations d_i</text>
+    <text x="395" y="250" fill="#f8fafc" font-size="12">• Length Regulator / MAS Expansion</text>
+    <text x="395" y="275" fill="#38bdf8" font-size="12" font-weight="700">Output: H_frame ∈ ℝ^(B × T_frames × 512)</text>
+  </g>
+
+  <!-- 3. Style Conditioning & Style Bank -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="360" width="260" height="230" rx="12" fill="url(#g-style)" stroke="#f472b6" stroke-width="2"/>
+    <rect x="75" y="375" width="230" height="30" rx="6" fill="#be185d" fill-opacity="0.5"/>
+    <text x="88" y="396" fill="#fdf2f8" font-size="15" font-weight="700">3. Acoustic Style Engine</text>
+    <text x="75" y="430" fill="#fbcfe8" font-size="12" font-weight="600">Decoupled Prosody Vector</text>
+    <text x="75" y="450" fill="#f8fafc" font-size="12">• Style Bank: [warm, excited, ...]</text>
+    <text x="75" y="470" fill="#f8fafc" font-size="12">• Style Encoder: Conv1D + Pool</text>
+    <text x="75" y="490" fill="#f8fafc" font-size="12">• Disentangled Vector:</text>
+    <text x="75" y="510" fill="#f8fafc" font-size="12">  s = [s_timbre (Jeet) || s_prosody]</text>
+    <text x="75" y="535" fill="#f472b6" font-size="12" font-weight="700">Output: s ∈ ℝ^(B × 64) (Unit Norm)</text>
+  </g>
+
+  <!-- 4. Pitch & Energy Predictor -->
+  <g filter="url(#shadow)">
+    <rect x="380" y="360" width="280" height="230" rx="12" fill="url(#g-pro)" stroke="#fbbf24" stroke-width="2"/>
+    <rect x="395" y="375" width="250" height="30" rx="6" fill="#b45309" fill-opacity="0.5"/>
+    <text x="408" y="396" fill="#fffbeb" font-size="15" font-weight="700">4. Pitch &amp; Energy Predictor</text>
+    <text x="395" y="430" fill="#fde68a" font-size="12" font-weight="600">Conditioned on [H_frame, s]</text>
+    <text x="395" y="450" fill="#f8fafc" font-size="12">• Multi-layer Bi-GRU + Convolutions</text>
+    <text x="395" y="470" fill="#f8fafc" font-size="12">• Pitch Predictor: log(F0) contour</text>
+    <text x="395" y="490" fill="#f8fafc" font-size="12">• Energy Predictor: RMS norm</text>
+    <text x="395" y="510" fill="#f8fafc" font-size="12">• Semitone Pitch Shift Dial</text>
+    <text x="395" y="535" fill="#fbbf24" font-size="12" font-weight="700">Outputs: F0, Energy ∈ ℝ^(B × T_frames)</text>
+  </g>
+
+  <!-- Arrow 3 -> 4 -->
+  <path d="M 320 475 L 370 475" stroke="#f472b6" stroke-width="2.5" fill="none" marker-end="url(#m-pink)"/>
+  <text x="330" y="465" fill="#f472b6" font-size="11" font-weight="600">Style s</text>
+
+  <!-- Connective Arrows into Generator (5) -->
+  <path d="M 660 220 C 700 220, 700 250, 730 250" stroke="#38bdf8" stroke-width="2.5" fill="none" marker-end="url(#m-cyan)"/>
+  <text x="675" y="230" fill="#38bdf8" font-size="11" font-weight="600">H_frame</text>
+
+  <path d="M 320 420 C 500 420, 680 340, 730 340" stroke="#f472b6" stroke-width="2.5" fill="none" marker-end="url(#m-pink)"/>
+  <text x="500" y="380" fill="#f472b6" font-size="11" font-weight="600">AdaIN Style s</text>
+
+  <path d="M 660 475 C 700 475, 700 420, 730 420" stroke="#fbbf24" stroke-width="2.5" fill="none" marker-end="url(#m-amber)"/>
+  <text x="675" y="455" fill="#fbbf24" font-size="11" font-weight="600">F0, Energy</text>
+
+  <!-- 5. AdaIN Neural Generator (The Core Model) -->
+  <g filter="url(#shadow)">
+    <rect x="740" y="160" width="360" height="370" rx="14" fill="url(#g-gen)" stroke="#4ade80" stroke-width="2.5"/>
+    <rect x="755" y="175" width="330" height="34" rx="8" fill="#15803d" fill-opacity="0.6"/>
+    <text x="770" y="198" fill="#f0fdf4" font-size="16" font-weight="700">5. AdaIN Residual Generator</text>
+    <text x="758" y="235" fill="#bbf7d0" font-size="13" font-weight="600">Non-Autoregressive Waveform Synthesizer</text>
+    
+    <rect x="758" y="250" width="324" height="42" rx="6" fill="#052e16" stroke="#22c55e" stroke-width="1"/>
+    <text x="768" y="268" fill="#86efac" font-size="11" font-weight="600">AdaIN Operation (Feature Modulation):</text>
+    <text x="768" y="284" fill="#dcfce7" font-size="11">AdaIN(x, s) = σ(s) · (x - μ(x)) / σ(x) + μ(s)</text>
+
+    <text x="758" y="315" fill="#f0fdf4" font-size="12">• F0 Sine Source / Harmonic Carrier Excitations</text>
+    <text x="758" y="335" fill="#f0fdf4" font-size="12">• 4x Cascaded Up-sampling Conv1D Transposed</text>
+    <text x="758" y="355" fill="#f0fdf4" font-size="12">• Multi-Receptive Field (MRF) ResBlocks:</text>
+    <text x="758" y="375" fill="#dcfce7" font-size="11">  Parallel Dilated Convs (kernel sizes: 3, 7, 11)</text>
+    <text x="758" y="395" fill="#f0fdf4" font-size="12">• Modulates Timbre &amp; Prosody per layer</text>
+    
+    <rect x="758" y="420" width="324" height="40" rx="6" fill="#14532d"/>
+    <text x="768" y="438" fill="#4ade80" font-size="12" font-weight="700">⚡ Single Forward Pass: ~220 ms (RTF &lt; 0.1!)</text>
+    <text x="768" y="452" fill="#bbf7d0" font-size="11">No iterative 32-step diffusion on audio latents!</text>
+  </g>
+
+  <!-- Arrow 5 -> 6 -->
+  <path d="M 1100 345 L 1150 345" stroke="#4ade80" stroke-width="2.5" fill="none" marker-end="url(#m-green)"/>
+  <text x="1105" y="335" fill="#4ade80" font-size="11" font-weight="600">Wave</text>
+
+  <!-- 6. Vocoder / Waveform Head -->
+  <g filter="url(#shadow)">
+    <rect x="1160" y="200" width="280" height="240" rx="12" fill="url(#g-voc)" stroke="#c084fc" stroke-width="2"/>
+    <rect x="1175" y="215" width="250" height="30" rx="6" fill="#6d28d9" fill-opacity="0.5"/>
+    <text x="1188" y="236" fill="#faf5ff" font-size="15" font-weight="700">6. Neural Vocoder Output</text>
+    <text x="1175" y="270" fill="#e9d5ff" font-size="12" font-weight="600">Vocos / HiFi-GAN Vocoder</text>
+    <text x="1175" y="295" fill="#f8fafc" font-size="12">• Inverse STFT (iSTFT) / Synthesis</text>
+    <text x="1175" y="315" fill="#f8fafc" font-size="12">• Peak Attenuation (-1.0 dB limiter)</text>
+    <text x="1175" y="340" fill="#c084fc" font-size="12" font-weight="700">Dual Export Streams:</text>
+    <text x="1175" y="360" fill="#f8fafc" font-size="12">  - Native: 24 kHz Hi-Fi PCM-16/24</text>
+    <text x="1175" y="380" fill="#f8fafc" font-size="12">  - Resampled: 16 kHz Mono PCM</text>
+    <text x="1175" y="405" fill="#e9d5ff" font-size="11">Shape: (B, 1, T_samples) in [-1.0, 1.0]</text>
+  </g>
+
+  <!-- 7. Discriminators & Training Losses (Bottom Box) -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="630" width="1380" height="150" rx="12" fill="#0f172a" stroke="#64748b" stroke-width="2" stroke-dasharray="6 4"/>
+    <rect x="80" y="645" width="460" height="28" rx="6" fill="#1e293b"/>
+    <text x="95" y="664" fill="#f1f5f9" font-size="14" font-weight="700">⚖️ Training Objective &amp; Discriminator Losses (Offline Kaggle Adaptation)</text>
+    
+    <text x="80" y="700" fill="#cbd5e1" font-size="12">• Multi-Period Discriminator (MPD): Evaluates periodic harmonic patterns at prime intervals [p = 2, 3, 5, 7, 11] to capture human pitch periodicity.</text>
+    <text x="80" y="720" fill="#cbd5e1" font-size="12">• Multi-Scale Spectrogram Discriminator (MSD): Evaluates consecutive audio frames across multiple temporal resolutions to enforce spectral realism.</text>
+    <text x="80" y="745" fill="#38bdf8" font-size="12" font-weight="700">Total Objective: L = L_adv(G; D) + λ_fm · L_fm(G; D) + λ_mel · L_mel(y, ŷ) + λ_F0 · L_F0 + λ_dur · L_dur</text>
+  </g>
+
+  <!-- Dashed feedback arrow from Generator to Discriminator -->
+  <path d="M 920 530 L 920 620" stroke="#94a3b8" stroke-width="2" stroke-dasharray="5 5" fill="none" marker-end="url(#m-slate)"/>
+  <text x="930" y="580" fill="#94a3b8" font-size="11" font-weight="600">Adversarial Gradients</text>
+
+</svg>
