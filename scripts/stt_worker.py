@@ -122,6 +122,9 @@ def main() -> int:
         )
         if args.no_denoise:
             pipe.denoiser.enabled = False
+        # Strict immediate GPU preloading at worker startup
+        if hasattr(pipe.encoder, "load"):
+            pipe.encoder.load()
     except (OSError, RuntimeError, ValueError) as exc:
         print(f"STT worker failed to load: {exc}")
         return 1

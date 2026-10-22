@@ -14,12 +14,12 @@ sys.path.insert(0, str(ROOT))
 from samvyas.web.voice_chat import (
     DEFAULT_MODEL,
     STTWorker,
+    TTSWorker,
     VoiceChatService,
     make_server,
     resolve_api_key,
     worker_transcriber,
 )
-
 
 # Assistant's default voice: Jeet's conversational preset (verified 7.9 s take).
 # Push-to-talk input needs no clip; this only sets whose voice replies use.
@@ -75,9 +75,9 @@ def main() -> int:
     parser.add_argument("--system", default=None)
     parser.add_argument("--no-tts", action="store_true", help="Text-only window.")
     parser.add_argument("--tts-python", default=str(ROOT / ".venv-tts/Scripts/python.exe"))
-    parser.add_argument("--tts-device", default="auto", choices=("auto", "cpu", "cuda"))
+    parser.add_argument("--tts-device", default="cuda", choices=("auto", "cpu", "cuda"))
     parser.add_argument("--cpu-fallback", action="store_true")
-    parser.add_argument("--steps", type=int, default=32)
+    parser.add_argument("--steps", type=int, default=16)
     parser.add_argument("--checkpoint", default=None)
     parser.add_argument("--clip-id", default=None)
     parser.add_argument("--dataset", default=str(ROOT / "assets/audio/voice_dataset"))
@@ -86,7 +86,7 @@ def main() -> int:
     parser.add_argument("--reference-text-file", default=None)
     parser.add_argument("--no-stt", action="store_true", help="No server STT worker.")
     parser.add_argument("--stt-python", default=str(ROOT / ".venv/Scripts/python.exe"))
-    parser.add_argument("--stt-device", default="auto", choices=("auto", "cpu", "cuda"))
+    parser.add_argument("--stt-device", default="cuda", choices=("auto", "cpu", "cuda"))
     parser.add_argument("--stt-lang", default="bn")
     parser.add_argument("--stt-no-denoise", action="store_true")
     parser.add_argument("--no-browser", action="store_true")
@@ -94,6 +94,7 @@ def main() -> int:
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         parser.error("For privacy, voice chat only binds to a loopback address.")
     stt_worker = None
+    tts_worker = None
     try:
         reference, reference_text = resolve_reference(args)
         if not args.no_stt:
@@ -105,15 +106,32 @@ def main() -> int:
                     os.environ["SAMVYAS_NEMO_PATH"] = str(default_patched)
                     print(f"Using patched NeMo checkpoint: {default_patched}")
             try:
+                print(f"Preloading STT worker onto {args.stt_device}...")
                 stt_worker = STTWorker(
                     args.stt_python,
                     device=args.stt_device,
                     no_denoise=args.stt_no_denoise,
                     lang=args.stt_lang,
                 )
-                print("Server STT worker ready (our pipeline, not browser recognition).")
+                print("Server STT worker ready (preloaded on GPU).")
             except RuntimeError as exc:
                 print(f"No server STT ({exc}); Talk falls back to browser recognition.")
+
+        if not args.no_tts and reference:
+            try:
+                print(f"Preloading IndicF5 TTS model onto {args.tts_device} (strict GPU preloading)...")
+                tts_worker = TTSWorker(
+                    args.tts_python,
+                    checkpoint=args.checkpoint,
+                    reference=reference,
+                    reference_text=reference_text,
+                    device=args.tts_device,
+                    steps=args.steps,
+                )
+                print("Server TTS worker ready (preloaded on GPU, zero per-sentence disk loading).")
+            except RuntimeError as exc:
+                print(f"TTS preloading error: {exc}. Falling back to one-shot.")
+
         service = VoiceChatService(
             model=args.model,
             api_key=resolve_api_key(args.api_key),
@@ -127,6 +145,7 @@ def main() -> int:
             reference=reference,
             reference_text=reference_text,
             enable_tts=not args.no_tts,
+            tts_worker=tts_worker,
         )
         if stt_worker is not None:
             service.stt_fn = worker_transcriber(stt_worker, service.session_dir / "stt_tmp")
@@ -150,6 +169,8 @@ def main() -> int:
         server.server_close()
         if stt_worker is not None:
             stt_worker.close()
+        if tts_worker is not None:
+            tts_worker.close()
     return 0
 
 

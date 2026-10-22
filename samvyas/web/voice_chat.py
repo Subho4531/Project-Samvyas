@@ -17,16 +17,17 @@ import subprocess
 import threading
 import urllib.request
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).with_name("static")
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.5-flash"
 AUDIO_PATTERN = re.compile(r"turn_[0-9]{2}/(baseline_01_16k\.wav|sent_[0-9]{2}/baseline_01_16k\.wav|mic\.wav)")
 MAX_SENTENCE_CHARS = 400  # force-split runaway sentences to bound TTS latency
 MAX_VOICE_BYTES = 16 * 1024 * 1024
@@ -125,7 +126,7 @@ class STTWorker:
             for attempt in (0, 1):
                 try:
                     return self._ask(wav_path)
-                except (RuntimeError, OSError, ValueError) as exc:
+                except (RuntimeError, OSError, ValueError):
                     if attempt == 1 or self.proc is None or self.proc.poll() is None:
                         raise
                     self._spawn()
@@ -144,6 +145,134 @@ class STTWorker:
 
     def close(self) -> None:
         """Stop the worker process."""
+        with self.lock:
+            if self.proc is not None:
+                try:
+                    self.proc.terminate()
+                    self.proc.wait(timeout=10)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+                self.proc = None
+
+
+class TTSWorker:
+    """Client for one persistent scripts/tts_worker.py process (running in .venv-tts).
+
+    Strictly preloads and holds IndicF5 and Vocos model weights in GPU VRAM across
+    the entire session. Eliminates per-sentence cold-boot and disk-loading delays.
+    """
+
+    def __init__(
+        self,
+        python: str | Path,
+        checkpoint: str | Path | None,
+        reference: str | Path,
+        reference_text: str,
+        device: str = "cuda",
+        steps: int = 16,
+        timeout: float = 300.0,
+        script: str | Path | None = None,
+    ) -> None:
+        self.cmd = [
+            str(python),
+            str(script or (ROOT / "scripts" / "tts_worker.py")),
+            "--device",
+            device,
+            "--reference",
+            str(reference),
+            "--reference-text",
+            reference_text,
+            "--steps",
+            str(steps),
+        ]
+        if checkpoint:
+            self.cmd.extend(["--checkpoint", str(checkpoint)])
+        self.timeout = timeout
+        self.lock = threading.Lock()
+        self.proc: subprocess.Popen | None = None
+        self.request_id = 0
+        self._spawn()
+
+    def _spawn(self) -> None:
+        """Start the TTS worker and wait for its GPU-ready signal."""
+        if self.proc is not None:
+            try:
+                self.proc.terminate()
+                self.proc.wait(timeout=10)
+            except (OSError, subprocess.SubprocessError):
+                pass
+        try:
+            self.proc = subprocess.Popen(
+                self.cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=None,
+                text=True,
+                bufsize=1,
+            )
+        except OSError as exc:
+            raise RuntimeError(f"Could not start TTS worker: {exc}") from exc
+        line = self.proc.stdout.readline()
+        if not line:
+            raise RuntimeError("TTS worker exited during startup (see its terminal log).")
+        for _ in range(49):
+            try:
+                hello = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                line = self.proc.stdout.readline()
+                if not line:
+                    raise RuntimeError("TTS worker exited during startup (see its terminal log).")
+        else:
+            raise RuntimeError("TTS worker spoke no ready line.")
+        if not hello.get("ready"):
+            raise RuntimeError(f"TTS worker failed startup: {hello.get('error') or line[:200]}")
+
+    def _read_reply(self) -> dict:
+        for _ in range(50):
+            line = self.proc.stdout.readline()
+            if not line:
+                raise RuntimeError("TTS worker died mid-turn.")
+            try:
+                return json.loads(line)
+            except json.JSONDecodeError:
+                continue
+        raise RuntimeError("TTS worker sent no protocol JSON.")
+
+    def synthesize(self, text: str, output_dir: str | Path, steps: int | None = None) -> Path:
+        """Synthesize one sentence on GPU; restarts a dead worker once."""
+        with self.lock:
+            for attempt in (0, 1):
+                try:
+                    return self._ask(text, output_dir, steps)
+                except (RuntimeError, OSError, ValueError):
+                    if attempt == 1 or self.proc is None or self.proc.poll() is None:
+                        raise
+                    self._spawn()
+            raise RuntimeError("TTS worker gave up.")
+
+    def _ask(self, text: str, output_dir: str | Path, steps: int | None = None) -> Path:
+        self.request_id += 1
+        payload: dict[str, Any] = {
+            "id": self.request_id,
+            "text": text,
+            "output_dir": str(output_dir),
+        }
+        if steps is not None:
+            payload["steps"] = steps
+        self.proc.stdin.write(json.dumps(payload) + "\n")
+        self.proc.stdin.flush()
+        reply = self._read_reply()
+        if reply.get("error"):
+            raise RuntimeError(f"TTS worker: {reply['error']}")
+        if reply.get("id") != self.request_id:
+            raise RuntimeError("TTS worker sent mismatched request id.")
+        wav = Path(reply["audio_16k"])
+        if not wav.is_file():
+            raise RuntimeError(f"TTS worker finished without audio file at {wav}")
+        return wav
+
+    def close(self) -> None:
         with self.lock:
             if self.proc is not None:
                 try:
@@ -297,6 +426,7 @@ class VoiceChatService:
         gemini_stream_fn: Callable[..., Any] = stream_gemini,
         stt_fn: Callable[[Any], str] | None = None,
         tts_fn: Callable[[str, Path], Path] | None = None,
+        tts_worker: TTSWorker | None = None,
     ) -> None:
         if history_limit < 1:
             raise ValueError("History limit must be positive.")
@@ -320,6 +450,7 @@ class VoiceChatService:
         self.gemini_fn = gemini_fn
         self.gemini_stream_fn = gemini_stream_fn
         self.stt_fn = stt_fn
+        self.tts_worker = tts_worker
         self.tts_fn = tts_fn or self._run_tts
         self.lock = threading.Lock()
         self.streams: dict[int, queue.Queue] = {}
@@ -332,7 +463,9 @@ class VoiceChatService:
         self.session_dir.mkdir(parents=True, exist_ok=False)
 
     def _run_tts(self, text: str, turn_dir: Path) -> Path:
-        """Synthesize one reply via .venv-tts; test_indic_f5 owns the files."""
+        """Synthesize one reply; delegates to persistent GPU TTSWorker if present."""
+        if self.tts_worker is not None:
+            return self.tts_worker.synthesize(text, turn_dir, steps=self.steps)
         cmd = [
             self.tts_python,
             str(ROOT / "scripts" / "test_indic_f5.py"),
@@ -353,7 +486,9 @@ class VoiceChatService:
             cmd.append("--cpu-fallback")
         if self.checkpoint:
             cmd += ["--checkpoint", self.checkpoint]
-        proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", check=False
+        )
         if proc.returncode != 0:
             raise RuntimeError(f"TTS failed: {(proc.stderr or proc.stdout)[-500:]}")
         wav = turn_dir / "baseline_01_16k.wav"
@@ -518,9 +653,8 @@ class VoiceChatService:
                 if self.enable_tts:
                     for sentence in complete:
                         voice(sentence)
-            if pending.strip():
-                if self.enable_tts:
-                    voice(pending.strip())
+            if pending.strip() and self.enable_tts:
+                voice(pending.strip())
             reply = "".join(deltas).strip()
             if not reply:
                 raise RuntimeError("Gemini returned an empty reply.")
