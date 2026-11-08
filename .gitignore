@@ -29,6 +29,7 @@ __pycache__/
 *$py.class
 *.so
 .pytest_cache/
+.ruff_cache/
 
 # Model checkpoints & large binary weights
 *.ckpt
@@ -48,3 +49,12 @@ tests/indicconformer_extracted/model_weights.ckpt
 .idea/
 .DS_Store
 Thumbs.db
+
+# Mimi realtime codec demo (model weights + local venv, ~3 GB)
+/mimi-realtime/mimi/
+/mimi-realtime/.venv/
+/mimi-realtime/*.wav
+/mimi-realtime/mimi_log.txt
+
+# Local agent session transcripts
+/session-ses_*.md
