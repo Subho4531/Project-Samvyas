@@ -85,11 +85,25 @@ def find_local_base() -> Path | None:
 
 
 def find_input(*needles: str) -> Path | None:
-    """Return the first input directory whose path contains all needles."""
+    """Return the first input directory whose path contains all needles.
+
+    Kaggle now mounts datasets as ``/kaggle/input/datasets/<owner>/<slug>``
+    rather than directly under ``/kaggle/input``.  Search both layouts.
+    """
     explicit = os.environ.get("SAMVYAS_DATA_DIR")
     if explicit and Path(explicit).is_dir():
         return Path(explicit)
-    for directory in sorted(path for path in INPUT.iterdir() if path.is_dir()):
+    roots: list[Path] = [INPUT]
+    datasets = INPUT / "datasets"
+    if datasets.is_dir():
+        roots.append(datasets)
+        roots.extend(path for path in datasets.rglob("*") if path.is_dir())
+    roots.extend(path for path in INPUT.iterdir() if path.is_dir() and path != datasets)
+    seen: set[Path] = set()
+    for directory in sorted(roots):
+        if directory in seen:
+            continue
+        seen.add(directory)
         name = directory.name.lower()
         if all(needle in name for needle in needles):
             return directory
@@ -170,8 +184,14 @@ def prepare_data(code: Path, base: Path | None) -> Path:
     prep = code / "scripts" / "prepare_emotion_manifest.py"
     jeet = env_dir("JEET_DIR") or find_input("jeet", "voice", "adaptation")
     if jeet is None:
-        jeet = INPUT / "jeet-voice-adaptation-v2"
-    if not jeet.is_dir():
+        for candidate in (
+            INPUT / "jeet-voice-adaptation-v2",
+            INPUT / "datasets" / "jeet065" / "jeet-voice-adaptation-v2",
+        ):
+            if candidate.is_dir():
+                jeet = candidate
+                break
+    if jeet is None or not jeet.is_dir():
         raise SystemExit(f"Jeet input dataset not found under {INPUT}.")
     command = [
         sys.executable,
