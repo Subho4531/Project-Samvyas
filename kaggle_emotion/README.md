@@ -86,3 +86,13 @@ Kaggle currently gives T4 x2 for `machine_shape: "NvidiaTeslaT4"` with about
 30 GPU-hours/week and a 12-hour session cap. The trainer checkpoints on rank 0
 only, keeps `best` plus the newest two `step_*` directories, and always writes
 `last` for resume. Use `SAMVYAS_MODE=full` only after the smoke run passes.
+
+`run.py` sets `USE_TF=0` / `USE_FLAX=0` / `TRANSFORMERS_NO_TF=1` before any
+import: Kaggle's base image ships TensorFlow and JAX, and `transformers` 4.49
+eagerly imports TensorFlow when it is detected, which pulls in JAX and needs
+numpy>=2 — colliding with the F5 stack's numpy 1.26.4 pin. The smoke run also
+uses `--num-workers 0` because Windows spawn pickles the dataset.
+
+The frozen DiT keeps float32 weights, so the flow target is cast to the model
+dtype/device inside `forward_emotion` before the DiT sees it. Without that cast
+fp16 produces a dtype mismatch and NaN validation loss at step 0.
