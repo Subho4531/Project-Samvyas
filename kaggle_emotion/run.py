@@ -322,8 +322,10 @@ def train(code: Path, base: Path | None, data: Path) -> Path:
         "2",
         "--eval-batch-size",
         "1",
+        # Windows spawn pickles the dataset; keep workers at 0 for the smoke run
+        # so the mel extractor survives into worker processes.
         "--num-workers",
-        "2",
+        "0" if MODE == "smoke" else "2",
         "--gradient-checkpointing",
         "--mixed-precision",
         "fp16",

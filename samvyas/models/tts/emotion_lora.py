@@ -372,6 +372,10 @@ class EmotionCFM(nn.Module):
         if not bool(target.any()):
             raise ValueError("Target mask is empty.")
 
+        # The frozen DiT keeps float32 weights, so its text/time/audio embedders
+        # produce float32 activations.  Under fp16 the flow target must match the
+        # model dtype or matmuls raise a dtype mismatch and the loss is NaN.
+        mel = mel.to(device=self.device, dtype=self.dtype)
         x1 = mel
         x0 = torch.randn_like(x1)
         time = torch.rand((batch,), dtype=torch.float32, device=mel.device)
