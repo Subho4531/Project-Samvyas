@@ -37,6 +37,12 @@ checkpointing, adapter export, and resume state.
 4. Download `emotion_lora_smoke_bundle.zip` from the kernel output before the
    12-hour session ends. Kaggle `/kaggle/working` does not survive forever.
 
+`run.py` launches `accelerate --multi_gpu --num_processes 2 --mixed_precision
+bf16`. IndicF5's own inference path autocasts to bfloat16, and the 22-block DiT
+overflows fp16 (NaN validation loss at step 0), so bf16 is used for training
+and evaluation alike. The smoke run also uses `--num-workers 0` because
+Windows spawn pickles the dataset.
+
 ## Full run
 
 1. Accept the `ai4bharat/IndicF5` access conditions and add `HF_TOKEN` as a
