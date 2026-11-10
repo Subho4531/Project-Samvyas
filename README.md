@@ -244,11 +244,41 @@ artifacts. Successful generation establishes neither voice similarity nor
 fine-tuning readiness. A real synthesis run and listening review are required
 to assess the reference-conditioned voice.
 
+## Emotion LoRA scaffold
+
+The separate emotion adapter keeps the pinned base frozen and trains LoRA on
+DiT attention/MLP projections plus four tag rows (neutral/happy/sad/angry) and
+a null row. Training uses `mel = [neutral prompt | emotional target]`, masks the
+target frames from conditioning, and computes flow-matching loss on the target
+suffix only. The Jeet v2 checkpoint remains a voice-likeness comparison, not the
+initialization.
+
+Build a portable prompt/target bundle and train with Accelerate DDP:
+
+```powershell
+.\.venv-verify\Scripts\python.exe scripts/prepare_emotion_manifest.py `
+  --subesco PATH_TO_SUBESCO --neutral PATH_TO_INDICVOICES_NEUTRAL `
+  --jeet-root outputs/tts/jeet_adaptation_v2/dataset `
+  --vocab PATH_TO_INDICF5/vocab.txt --output-dir outputs/emotion_data/v1
+
+accelerate launch --multi_gpu --num_processes 2 --mixed_precision fp16 `
+  scripts/train_emotion_lora.py --data-root outputs/emotion_data/v1 `
+  --output-dir outputs/emotion_lora/v1 --gradient-checkpointing
+```
+
+The Kaggle entry point is [`kaggle_emotion/run.py`](kaggle_emotion/run.py);
+its first run is a 50-step Jeet-only smoke test on two T4s. See
+[`docs/emotion_lora_training.md`](docs/emotion_lora_training.md) and
+[`kaggle_emotion/README.md`](kaggle_emotion/README.md) for the data contract,
+split rules, checkpoint layout, licensing, and evaluation gates. Training loss
+is not evidence of emotional quality or voice likeness; listening review remains
+the acceptance test.
+
 Fast tests require pytest, NumPy, SciPy, soundfile, python-dotenv, and CPU
 PyTorch for the frozen-module check:
 
 ```powershell
-.\.venv-verify\Scripts\python.exe -m pytest tests/test_voice_dataset.py tests/test_voice_recording.py tests/test_indic_f5.py -q
+.\.venv-verify\Scripts\python.exe -m pytest tests/test_voice_dataset.py tests/test_voice_recording.py tests/test_indic_f5.py tests/test_emotion_lora.py tests/test_emotion_dataset.py tests/test_emotion_trainer.py -q
 ```
 
 An optional real-model smoke test is gated by `SAMVYAS_RUN_TTS_REAL=1`,

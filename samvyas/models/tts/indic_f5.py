@@ -38,10 +38,17 @@ def load_indic_model(checkpoint: str | Path | None = None) -> nn.Module:
     common = {"repo_id": "ai4bharat/IndicF5", "revision": MODEL_REVISION, "token": token}
     local_base = os.getenv("SAMVYAS_INDICF5_DIR")
     if local_base:
-        vocab = str(Path(local_base) / "vocab.txt")
-        weights = str(checkpoint) if checkpoint else str(Path(local_base) / "model.safetensors")
+        base_root = Path(local_base)
+        vocab_candidates = (base_root / "vocab.txt", base_root / "checkpoints" / "vocab.txt")
+        vocab = str(
+            next((path for path in vocab_candidates if path.is_file()), vocab_candidates[0])
+        )
+        weights = str(checkpoint) if checkpoint else str(base_root / "model.safetensors")
         if not Path(vocab).is_file() or not Path(weights).is_file():
-            raise FileNotFoundError("Local IndicF5 dataset needs vocab.txt and model.safetensors.")
+            raise FileNotFoundError(
+                "Local IndicF5 dataset needs vocab.txt (or checkpoints/vocab.txt) "
+                "and model.safetensors."
+            )
     else:
         vocab = hf_hub_download(filename="checkpoints/vocab.txt", **common)
         weights = (

@@ -7,6 +7,8 @@
 /assets/audio/voice_dataset/
 /assets/audio/voice_users/
 /outputs/tts/
+/outputs/emotion_data/
+/outputs/emotion_lora/
 /configs/tts/recordings/
 /.venv/
 venv/
