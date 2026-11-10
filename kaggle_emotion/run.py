@@ -45,7 +45,7 @@ INPUT = Path("/kaggle/input")
 MODE = os.environ.get("SAMVYAS_MODE", "smoke").strip().lower()
 if MODE not in ("smoke", "full"):
     raise SystemExit("SAMVYAS_MODE must be smoke or full.")
-REPO_URL = os.environ.get("SAMVYAS_REPO", "https://github.com/Subho4531/VoiceLLM.git")
+REPO_URL = os.environ.get("SAMVYAS_REPO", "https://github.com/Subho4531/Project-Samvyas.git")
 COMMIT = os.environ.get("SAMVYAS_COMMIT", "main")
 
 
