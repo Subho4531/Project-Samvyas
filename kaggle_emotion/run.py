@@ -17,6 +17,14 @@ import sys
 import time
 from pathlib import Path
 
+# Kaggle's base image ships TensorFlow + JAX. transformers 4.49 eagerly
+# imports TensorFlow when it is detected, and that pulls in JAX, which needs
+# numpy>=2 (np.dtypes.StringDType). The F5 stack pins numpy 1.26.4, so disable
+# TF/Flax detection before anything touches transformers.
+os.environ.setdefault("USE_TF", "0")
+os.environ.setdefault("USE_FLAX", "0")
+os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+
 # This must be the first executable action in the kernel.
 SMI = subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=False)
 print(SMI.stdout)
