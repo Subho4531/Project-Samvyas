@@ -276,7 +276,9 @@ def train(code: Path, base: Path | None, data: Path) -> Path:
     script = code / "scripts" / "train_emotion_lora.py"
     accelerate_bin = shutil.which("accelerate")
     launcher = (
-        [accelerate_bin] if accelerate_bin else [sys.executable, "-m", "accelerate.commands.launch"]
+        [accelerate_bin, "launch"]
+        if accelerate_bin
+        else [sys.executable, "-m", "accelerate.commands.launch"]
     )
     command = [
         *launcher,

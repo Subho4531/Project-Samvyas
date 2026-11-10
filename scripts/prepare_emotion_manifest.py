@@ -624,7 +624,7 @@ def main() -> None:
         key = f"{record['source']}/{record['emotion']}"
         bucket = counts.setdefault(key, {"clips": 0, "hours": 0.0})
         bucket["clips"] += 1
-        bucket["hours"] += float(record["duration"])
+        bucket["hours"] += float(record["duration"]) / 3600
     report = {
         "output_dir": str(args.output_dir),
         "vocab": str(args.vocab) if args.vocab else None,
