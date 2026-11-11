@@ -83,7 +83,8 @@ def secret(name: str) -> str | None:
 
         value = UserSecretsClient().get_secret(name)
         return str(value) if value else None
-    except Exception:  # noqa: BLE001 - Kaggle may not expose secrets outside kernels
+    except Exception as exc:  # noqa: BLE001 - Kaggle may not expose secrets outside kernels
+        print(f"Kaggle secret {name!r} unavailable ({type(exc).__name__}).", flush=True)
         return None
 
 
@@ -596,7 +597,12 @@ def evaluate(code: Path, base: Path | None, data: Path, jeet: Path, output: Path
 def main() -> None:
     """Prepare data, train on two GPUs, evaluate unseen audio, and package the bundle."""
     _disk_report("startup")
-    token = secret("HF_TOKEN") or os.environ.get("HF_TOKEN") or os.environ.get("HF_ACESS_TOKEN")
+    token = (
+        secret("HF_TOKEN")
+        or secret("HF_ACESS_TOKEN")
+        or os.environ.get("HF_TOKEN")
+        or os.environ.get("HF_ACESS_TOKEN")
+    )
     if token:
         os.environ["HF_TOKEN"] = token
     if (
@@ -606,8 +612,9 @@ def main() -> None:
         and find_input("indicvoices") is None
     ):
         raise SystemExit(
-            "HF_TOKEN secret is missing for full mode. Attach HF_TOKEN in Kaggle Notebook Secrets "
-            "or provide NEUTRAL_DIR."
+            "HF_TOKEN secret is missing for full mode. Kaggle CLI `kernels push` does not carry "
+            "Add-ons -> Secrets; open the pushed notebook in Kaggle Web UI, enable Add-ons -> "
+            "Secrets -> HF_TOKEN, and run Save Version -> Save & Run All (or provide NEUTRAL_DIR)."
         )
     base = find_local_base()
     if base is not None:

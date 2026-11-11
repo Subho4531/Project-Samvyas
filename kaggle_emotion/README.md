@@ -43,6 +43,9 @@ and evaluation alike.
 
 1. Accept `ai4bharat/IndicF5` and `ai4bharat/indicvoices_r` access conditions on
    Hugging Face, and enable the `HF_TOKEN` secret on the Kaggle kernel.
+   Because `kaggle kernels push` does not preserve `Add-ons -> Secrets` bindings,
+   trigger the full run from the Kaggle web editor (`Save Version -> Save & Run
+   All`) after toggling `HF_TOKEN` on (or attach pre-staged shards via `NEUTRAL_DIR`).
 2. In `full` mode, `run.py` automatically downloads `sajid73/SUBESCO-audio-dataset`
    (`data/*.parquet`) and strided `ai4bharat/indicvoices_r` Bengali shards
    (`Bengali/train-*.parquet`, stopping around 6.5 pairable hours / >= 12 speakers)
