@@ -100,7 +100,7 @@ def test_mel_cache_reuses_features(tmp_path: Path) -> None:
 
 
 def test_manifest_rejects_self_prompt_and_wrong_speaker(tmp_path: Path) -> None:
-    """Prompt leakage and cross-speaker references fail closed."""
+    """Prompt leakage, cross-speaker references, and unknown prompt labels fail closed."""
     row = _row(tmp_path, "one", "happy", "s1", "a")
     row["prompt_clip_id"] = "one"
     write_manifest(tmp_path / "train.jsonl", [row])
@@ -111,6 +111,20 @@ def test_manifest_rejects_self_prompt_and_wrong_speaker(tmp_path: Path) -> None:
     write_manifest(tmp_path / "train.jsonl", [row])
     with pytest.raises(ValueError, match="share a speaker"):
         EmotionPairDataset(tmp_path, "train", mel_fn=lambda w: torch.zeros(1, 100, 2))
+    row["prompt_speaker_id"] = "s1"
+    row["prompt_emotion"] = "fear"
+    write_manifest(tmp_path / "train.jsonl", [row])
+    with pytest.raises(ValueError, match="Unsupported emotion label"):
+        EmotionPairDataset(tmp_path, "train", mel_fn=lambda w: torch.zeros(1, 100, 2))
+
+
+def test_manifest_allows_non_neutral_prompt_for_tag_regularization(tmp_path: Path) -> None:
+    """Non-neutral prompts (from neutral_prompt_ratio < 1) load with normalized labels."""
+    row = _row(tmp_path, "one", "happy", "s1", "a")
+    row["prompt_emotion"] = "anger"
+    write_manifest(tmp_path / "train.jsonl", [row])
+    dataset = EmotionPairDataset(tmp_path, "train", mel_fn=lambda w: torch.zeros(1, 100, 2))
+    assert dataset.rows[0]["prompt_emotion"] == "angry"
 
 
 def test_frame_batch_sampler_covers_and_respects_budget() -> None:

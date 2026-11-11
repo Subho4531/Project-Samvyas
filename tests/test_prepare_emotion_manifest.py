@@ -227,6 +227,15 @@ def test_subesco_disambiguates_male_female_speaker_id_and_filters_labels(tmp_pat
         for line in (output / split).read_text(encoding="utf-8").splitlines():
             pair = json.loads(line)
             assert pair["prompt_speaker_id"] == pair["speaker_id"]
+    # With default --neutral-prompt-ratio 0.8, non-neutral prompts exist and must still load.
+    assert report["train_pairs_report"]["emotional_prompts"] > 0
+    for split in ("train", "validation"):
+        ds = EmotionPairDataset(
+            output,
+            split,
+            mel_fn=lambda waveform: torch.ones(1, 100, max(1, waveform.shape[-1] // 256)),
+        )
+        assert len(ds) > 0
 
 
 def test_filter_pair_durations_drops_text_exceeding_mel_frames() -> None:

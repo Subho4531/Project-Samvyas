@@ -214,8 +214,6 @@ class EmotionPairDataset(Dataset[dict[str, Any]]):
                 raise ValueError(f"Row {index} has an empty prompt_text.")
             row["emotion"] = normalize_emotion(row["emotion"])
             row["prompt_emotion"] = normalize_emotion(row["prompt_emotion"])
-            if row["prompt_emotion"] != "neutral":
-                raise ValueError("Prompt audio must be neutral.")
             if row["prompt_clip_id"] == row["clip_id"]:
                 raise ValueError("A clip cannot be its own prompt.")
             if row["prompt_speaker_id"] != row["speaker_id"]:
