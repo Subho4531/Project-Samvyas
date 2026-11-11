@@ -594,6 +594,33 @@ def evaluate(code: Path, base: Path | None, data: Path, jeet: Path, output: Path
     subprocess.run(command, check=True, env=env)
 
 
+def _verify_indicvoices_access(token: str) -> None:
+    """Fail fast before pip install if HF_TOKEN cannot read gated IndicVoices-R shards."""
+    try:
+        from huggingface_hub import get_hf_file_metadata, hf_hub_url
+    except ImportError:
+        return
+    probe_url = hf_hub_url(
+        repo_id="ai4bharat/indicvoices_r",
+        filename="Bengali/train-00000-of-00155.parquet",
+        repo_type="dataset",
+    )
+    try:
+        meta = get_hf_file_metadata(probe_url, token=token)
+        print(f"Verified IndicVoices-R gated access (probe size={meta.size}).", flush=True)
+    except Exception as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status in (401, 403) or "gated" in type(exc).__name__.lower() or "403" in str(exc):
+            raise SystemExit(
+                "HF_TOKEN lacks access to gated dataset ai4bharat/indicvoices_r (HTTP "
+                f"{status or 403}). Visit https://huggingface.co/datasets/ai4bharat/indicvoices_r "
+                "signed in as your HF account, click 'Agree and access repository', and ensure "
+                "fine-grained tokens allow 'Read access to contents of all public gated repos "
+                "you can access'."
+            ) from exc
+        raise
+
+
 def main() -> None:
     """Prepare data, train on two GPUs, evaluate unseen audio, and package the bundle."""
     _disk_report("startup")
@@ -605,17 +632,17 @@ def main() -> None:
     )
     if token:
         os.environ["HF_TOKEN"] = token
-    if (
-        MODE == "full"
-        and not token
-        and env_dir("NEUTRAL_DIR") is None
-        and find_input("indicvoices") is None
-    ):
-        raise SystemExit(
-            "HF_TOKEN secret is missing for full mode. Kaggle CLI `kernels push` does not carry "
-            "Add-ons -> Secrets; open the pushed notebook in Kaggle Web UI, enable Add-ons -> "
-            "Secrets -> HF_TOKEN, and run Save Version -> Save & Run All (or provide NEUTRAL_DIR)."
-        )
+    need_ivr_download = (
+        MODE == "full" and env_dir("NEUTRAL_DIR") is None and find_input("indicvoices") is None
+    )
+    if need_ivr_download:
+        if not token:
+            raise SystemExit(
+                "HF_TOKEN secret is missing for full mode. Kaggle CLI `kernels push` does not carry "
+                "Add-ons -> Secrets; open the pushed notebook in Kaggle Web UI, enable Add-ons -> "
+                "Secrets -> HF_TOKEN, and run Save Version -> Save & Run All (or provide NEUTRAL_DIR)."
+            )
+        _verify_indicvoices_access(token)
     base = find_local_base()
     if base is not None:
         os.environ["SAMVYAS_INDICF5_DIR"] = str(base)
