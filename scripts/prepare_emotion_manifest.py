@@ -131,7 +131,7 @@ def _write_clip(
 
 def _row_text(row: dict[str, Any]) -> str:
     """Pick the transcript field used by the supported corpora."""
-    for key in ("text", "transcription", "sentence", "normalized_text"):
+    for key in ("text", "transcription", "normalized", "sentence", "normalized_text"):
         value = row.get(key)
         if isinstance(value, str) and value.strip():
             return _clean_text(value)
@@ -139,7 +139,23 @@ def _row_text(row: dict[str, Any]) -> str:
 
 
 def _row_speaker(row: dict[str, Any]) -> str:
-    """Pick a stable speaker identifier."""
+    """Pick a stable speaker identifier, disambiguating SUBESCO male/female IDs."""
+    speaker_id = row.get("speaker_id")
+    gender = row.get("speaker_gender")
+    name = row.get("speaker_name")
+    if (
+        speaker_id is not None
+        and str(speaker_id).strip()
+        and (
+            (gender is not None and str(gender).strip()) or (name is not None and str(name).strip())
+        )
+    ):
+        parts = [
+            str(part).strip()
+            for part in (gender, speaker_id, name)
+            if part is not None and str(part).strip()
+        ]
+        return "_".join(parts)
     for key in ("speaker_id", "speaker_name", "speaker"):
         value = row.get(key)
         if value is not None and str(value).strip():
@@ -331,7 +347,7 @@ def _load_source(
                     min_duration=min_duration,
                     max_duration=max_duration,
                 )
-            except (ValueError, RuntimeError, OSError) as exc:
+            except (ValueError, RuntimeError, OSError, sf.SoundFileError) as exc:
                 if strict_vocab and "vocabulary misses" in str(exc):
                     raise
                 reason = str(exc).split(":")[0][:80] or "invalid row"
@@ -384,7 +400,7 @@ def _load_jeet(
                     min_duration=min_duration,
                     max_duration=max_duration,
                 )
-            except (ValueError, RuntimeError, OSError) as exc:
+            except (ValueError, RuntimeError, OSError, sf.SoundFileError) as exc:
                 if strict_vocab and "vocabulary misses" in str(exc):
                     raise
                 reason = str(exc).split(":")[0][:80] or "invalid row"
@@ -445,13 +461,16 @@ def _write_clips(path: Path, records: list[dict[str, Any]]) -> None:
 def _filter_pair_durations(
     pairs: list[dict[str, Any]], max_total_seconds: float
 ) -> tuple[list[dict[str, Any]], int]:
-    """Drop pairs whose prompt+target exceed the trainer frame budget."""
+    """Drop pairs that exceed the frame budget or cannot fit combined text into mel frames."""
     kept: list[dict[str, Any]] = []
     dropped = 0
     for pair in pairs:
         target = float(pair.get("duration") or 0.0)
         prompt = float(pair.get("prompt_duration") or 0.0)
-        if target + prompt <= max_total_seconds:
+        combined = f"{str(pair.get('prompt_text', '')).strip()} {str(pair.get('text', '')).strip()}"
+        # Floor mel frames conservatively at 24 kHz / 256 hop so collate_emotion_batch never rejects a pair.
+        min_frames = int(prompt * 24_000 // 256) + int(target * 24_000 // 256)
+        if target + prompt <= max_total_seconds and len(combined) <= max(1, min_frames - 2):
             kept.append(pair)
         else:
             dropped += 1

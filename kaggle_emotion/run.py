@@ -1,8 +1,9 @@
-"""Kaggle dual-T4 job for the IndicF5 emotion LoRA scaffold.
+"""Kaggle dual-T4 job for the IndicF5 emotion LoRA adapter.
 
 Modes (``SAMVYAS_MODE``):
   smoke: Jeet v2 only, 50 optimizer steps, validates DDP/checkpoint plumbing.
-  full:  SUBESCO + curated IndicVoices-R neutral + Jeet, full training.
+  full:  SUBESCO + curated IndicVoices-R Bengali neutral + Jeet, Stage A training
+         (up to 10 epochs / 9.5h cap) followed by unseen-sentence evaluation.
 
 The script starts with nvidia-smi and fails unless exactly two GPUs are visible.
 """
@@ -10,11 +11,13 @@ The script starts with nvidia-smi and fails unless exactly two GPUs are visible.
 from __future__ import annotations
 
 import json
+import math
 import os
 import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 
 # Kaggle's base image ships TensorFlow + JAX. transformers 4.49 eagerly
@@ -24,6 +27,8 @@ from pathlib import Path
 os.environ.setdefault("USE_TF", "0")
 os.environ.setdefault("USE_FLAX", "0")
 os.environ.setdefault("TRANSFORMERS_NO_TF", "1")
+# Keep Hugging Face downloads out of /kaggle/working so kernel outputs stay small.
+os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
 
 # This must be the first executable action in the kernel.
 SMI = subprocess.run(["nvidia-smi"], capture_output=True, text=True, check=False)
@@ -49,12 +54,26 @@ print(
 )
 
 WORK = Path("/kaggle/working")
+TMP_WORK = Path("/tmp/samvyas_work")
 INPUT = Path("/kaggle/input")
-MODE = os.environ.get("SAMVYAS_MODE", "smoke").strip().lower()
+MODE = os.environ.get("SAMVYAS_MODE", "full").strip().lower()
 if MODE not in ("smoke", "full"):
     raise SystemExit("SAMVYAS_MODE must be smoke or full.")
 REPO_URL = os.environ.get("SAMVYAS_REPO", "https://github.com/Subho4531/Project-Samvyas.git")
 COMMIT = os.environ.get("SAMVYAS_COMMIT", "main")
+
+
+def _disk_report(label: str) -> None:
+    """Log available disk space in /kaggle/working and /tmp."""
+    info: dict[str, dict[str, float]] = {}
+    for name, path in (("working", WORK), ("tmp", Path("/tmp"))):
+        if path.exists():
+            usage = shutil.disk_usage(path)
+            info[name] = {
+                "total_gb": round(usage.total / (1024**3), 2),
+                "free_gb": round(usage.free / (1024**3), 2),
+            }
+    print(f"Disk [{label}]: {json.dumps(info)}", flush=True)
 
 
 def secret(name: str) -> str | None:
@@ -126,8 +145,24 @@ def env_dir(name: str) -> Path | None:
     return None
 
 
+def resolve_jeet_dir() -> Path:
+    """Locate the attached Jeet v2 dataset directory under /kaggle/input."""
+    jeet = env_dir("JEET_DIR") or find_input("jeet", "voice", "adaptation")
+    if jeet is None:
+        for candidate in (
+            INPUT / "jeet-voice-adaptation-v2",
+            INPUT / "datasets" / "jeet065" / "jeet-voice-adaptation-v2",
+        ):
+            if candidate.is_dir():
+                jeet = candidate
+                break
+    if jeet is None or not jeet.is_dir():
+        raise SystemExit(f"Jeet input dataset not found under {INPUT}.")
+    return jeet
+
+
 def clone_code() -> Path:
-    """Clone or reuse the repository and check out the requested revision."""
+    """Clone or reuse the repository in /tmp and check out the requested revision."""
     if os.environ.get("SAMVYAS_CODE_DIR"):
         code = Path(os.environ["SAMVYAS_CODE_DIR"]).resolve()
         if not (code / "scripts" / "train_emotion_lora.py").is_file():
@@ -138,7 +173,8 @@ def clone_code() -> Path:
         if (candidate / "samvyas" / "models" / "tts" / "emotion_lora.py").is_file():
             print("Using attached code dataset:", candidate, flush=True)
             return candidate
-    code = WORK / "VoiceLLM"
+    TMP_WORK.mkdir(parents=True, exist_ok=True)
+    code = TMP_WORK / "VoiceLLM"
     if code.exists():
         shutil.rmtree(code)
     token = secret("GITHUB_TOKEN")
@@ -177,30 +213,163 @@ def install(code: Path) -> None:
         [sys.executable, "-m", "pip", "install", "-q", *packages],
         check=True,
     )
+    eval_check = subprocess.run(
+        [sys.executable, "-c", "import librosa, sklearn"],
+        capture_output=True,
+        check=False,
+    )
+    if eval_check.returncode != 0:
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "-q",
+                "librosa>=0.10",
+                "scikit-learn>=1.3",
+                "numpy==1.26.4",
+            ],
+            check=True,
+        )
     subprocess.run(
-        [sys.executable, "-c", "import f5_tts, accelerate, safetensors; print('tts deps ok')"],
+        [
+            sys.executable,
+            "-c",
+            "import f5_tts, accelerate, safetensors, pyarrow, librosa, sklearn; print('tts+eval deps ok')",
+        ],
         check=True,
     )
     print("Repository:", code, flush=True)
 
 
-def prepare_data(code: Path, base: Path | None) -> Path:
-    """Run the manifest builder for smoke or full mode."""
-    data = WORK / f"emotion_data_{MODE}"
+def fetch_subesco(dst: Path) -> Path:
+    """Download public sajid73/SUBESCO-audio-dataset parquet shards into /tmp."""
+    from huggingface_hub import snapshot_download
+
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    print("Downloading sajid73/SUBESCO-audio-dataset (data/*.parquet)...", flush=True)
+    snapshot_download(
+        repo_id="sajid73/SUBESCO-audio-dataset",
+        repo_type="dataset",
+        allow_patterns=["data/*.parquet"],
+        local_dir=str(dst),
+        token=False,
+    )
+    shards = sorted(dst.rglob("*.parquet"))
+    if not shards:
+        raise SystemExit(f"No parquet shards downloaded for SUBESCO under {dst}.")
+    print(f"Downloaded {len(shards)} SUBESCO parquet shards to {dst}.", flush=True)
+    return dst
+
+
+def _strided_order(items: list[str], limit: int) -> list[str]:
+    """Select paths evenly strided across the shard list for speaker diversity."""
+    if len(items) <= limit:
+        return list(items)
+    order: list[str] = []
+    used: set[int] = set()
+    step = max(1, len(items) // limit)
+    for offset in range(step):
+        for idx in range(offset, len(items), step):
+            if idx not in used:
+                order.append(items[idx])
+                used.add(idx)
+            if len(order) >= limit:
+                return order
+    return order
+
+
+def fetch_indicvoices_neutral(
+    dst: Path,
+    token: str,
+    *,
+    target_hours: float = 6.5,
+    min_speakers: int = 12,
+    max_shards: int = 24,
+) -> Path:
+    """Download gated ai4bharat/indicvoices_r Bengali shards until target hours/speakers are met."""
+    import pyarrow.parquet as pq
+    from huggingface_hub import HfApi, hf_hub_download
+
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    api = HfApi(token=token)
+    print("Listing ai4bharat/indicvoices_r Bengali/train-*.parquet shards...", flush=True)
+    repo_files = sorted(
+        f
+        for f in api.list_repo_files("ai4bharat/indicvoices_r", repo_type="dataset")
+        if f.startswith("Bengali/train-") and f.endswith(".parquet")
+    )
+    if not repo_files:
+        raise SystemExit("No Bengali/train-*.parquet shards found in ai4bharat/indicvoices_r.")
+
+    candidates = _strided_order(repo_files, max_shards)
+    speaker_clips: Counter[str] = Counter()
+    speaker_seconds: Counter[str] = Counter()
+    downloaded = 0
+
+    for shard in candidates:
+        local_file = Path(
+            hf_hub_download(
+                repo_id="ai4bharat/indicvoices_r",
+                filename=shard,
+                repo_type="dataset",
+                token=token,
+                local_dir=str(dst),
+            )
+        )
+        downloaded += 1
+        pf = pq.ParquetFile(local_file)
+        for batch in pf.iter_batches(columns=["duration", "speaker_id", "text"]):
+            cols = batch.to_pydict()
+            for dur, sp, txt in zip(cols["duration"], cols["speaker_id"], cols["text"]):
+                if dur is None or not math.isfinite(float(dur)):
+                    continue
+                dur_f = float(dur)
+                if not 1.0 <= dur_f <= 15.0:
+                    continue
+                if not isinstance(txt, str) or not txt.strip():
+                    continue
+                sp_str = str(sp or "").strip()
+                if not sp_str:
+                    continue
+                speaker_clips[sp_str] += 1
+                speaker_seconds[sp_str] += dur_f
+
+        pairable_speakers = [sp for sp, cnt in speaker_clips.items() if cnt >= 2]
+        pairable_hours = sum(speaker_seconds[sp] for sp in pairable_speakers) / 3600.0
+        print(
+            f"IV-R shard {downloaded}/{len(candidates)} ({shard}): "
+            f"{pairable_hours:.2f}h across {len(pairable_speakers)} pairable speakers",
+            flush=True,
+        )
+        if pairable_hours >= target_hours and len(pairable_speakers) >= min_speakers:
+            break
+        free_gb = shutil.disk_usage("/tmp").free / (1024**3)
+        if free_gb < 4.5 and pairable_hours >= 3.0 and len(pairable_speakers) >= 6:
+            print(
+                f"Stopping IV-R shard fetch early with {free_gb:.2f} GB free in /tmp "
+                f"and {pairable_hours:.2f}h collected.",
+                flush=True,
+            )
+            break
+
+    if not any(dst.rglob("*.parquet")):
+        raise SystemExit(f"No IndicVoices-R parquet files present in {dst}.")
+    return dst
+
+
+def prepare_data(code: Path, base: Path | None, jeet: Path) -> Path:
+    """Fetch corpora if needed, build manifest under /tmp, and free raw HF shards."""
+    TMP_WORK.mkdir(parents=True, exist_ok=True)
+    data = TMP_WORK / f"emotion_data_{MODE}"
     if data.exists():
         shutil.rmtree(data)
     prep = code / "scripts" / "prepare_emotion_manifest.py"
-    jeet = env_dir("JEET_DIR") or find_input("jeet", "voice", "adaptation")
-    if jeet is None:
-        for candidate in (
-            INPUT / "jeet-voice-adaptation-v2",
-            INPUT / "datasets" / "jeet065" / "jeet-voice-adaptation-v2",
-        ):
-            if candidate.is_dir():
-                jeet = candidate
-                break
-    if jeet is None or not jeet.is_dir():
-        raise SystemExit(f"Jeet input dataset not found under {INPUT}.")
     command = [
         sys.executable,
         str(prep),
@@ -218,18 +387,26 @@ def prepare_data(code: Path, base: Path | None) -> Path:
     vocab = base_vocab(base) if base is not None else None
     if vocab is not None:
         command.extend(["--vocab", str(vocab)])
+
+    raw_downloads: Path | None = None
     if MODE == "full":
+        raw_downloads = TMP_WORK / "hf_datasets"
         subesco = env_dir("SUBESCO_DIR") or find_input("subesco")
-        neutral = env_dir("NEUTRAL_DIR") or find_input("indicvoices") or find_input("neutral")
         if subesco is None:
-            raise SystemExit(
-                "SUBESCO input missing. Upload the official CC BY 4.0 parquet and add "
-                "its dataset source to kernel-metadata.json (or set SUBESCO_DIR)."
-            )
+            subesco = fetch_subesco(raw_downloads / "subesco")
+        neutral = env_dir("NEUTRAL_DIR") or find_input("indicvoices") or find_input("neutral")
         if neutral is None:
-            raise SystemExit(
-                "Curated IndicVoices-R neutral input missing. Upload the JSONL/parquet "
-                "bundle and add its dataset source (or set NEUTRAL_DIR)."
+            token = os.environ.get("HF_TOKEN")
+            if not token:
+                raise SystemExit(
+                    "HF_TOKEN is required to download gated ai4bharat/indicvoices_r in full mode. "
+                    "Enable HF_TOKEN under Kaggle Secrets -> Add-ons."
+                )
+            neutral = fetch_indicvoices_neutral(
+                raw_downloads / "indicvoices_r",
+                token,
+                target_hours=float(os.environ.get("SAMVYAS_NEUTRAL_FETCH_HOURS", "6.5")),
+                max_shards=int(os.environ.get("SAMVYAS_MAX_IVR_SHARDS", "24")),
             )
         command.extend(
             [
@@ -264,13 +441,30 @@ def prepare_data(code: Path, base: Path | None) -> Path:
                 "1",
             ]
         )
+
     env = {**os.environ, "PYTHONPATH": str(code)}
     subprocess.run(command, check=True, env=env)
     if not (data / "train.jsonl").is_file() or not (data / "validation.jsonl").is_file():
         raise SystemExit("Manifest build did not produce train/validation JSONL.")
     report = json.loads((data / "report.json").read_text(encoding="utf-8"))
     print("Manifest report:", json.dumps(report, indent=2), flush=True)
+
+    # Free multi-GB 48 kHz HF parquet downloads now that normalized 16 kHz WAVs exist.
+    if raw_downloads is not None and raw_downloads.exists():
+        shutil.rmtree(raw_downloads)
+        print("Cleaned up raw HF dataset shards under", raw_downloads, flush=True)
+    _disk_report("after prepare_data")
     return data
+
+
+def _copy_manifest_metadata(data: Path, output: Path) -> None:
+    """Copy lightweight JSON/JSONL manifest provenance into the output folder."""
+    meta_dir = output / "manifest_metadata"
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("report.json", "clips.jsonl", "train.jsonl", "validation.jsonl"):
+        src = data / name
+        if src.is_file():
+            shutil.copy2(src, meta_dir / name)
 
 
 def train(code: Path, base: Path | None, data: Path) -> Path:
@@ -288,24 +482,29 @@ def train(code: Path, base: Path | None, data: Path) -> Path:
         if accelerate_bin
         else [sys.executable, "-m", "accelerate.commands.launch"]
     )
+    max_seconds = "0" if MODE == "smoke" else os.environ.get("SAMVYAS_MAX_SECONDS", "34200")
     command = [
         *launcher,
         "--multi_gpu",
         "--num_processes",
         "2",
+        # IndicF5's own inference path autocasts to bfloat16 (see indic_f5.py);
+        # the 22-block DiT overflows fp16 and produces NaN validation loss.
         "--mixed_precision",
-        "fp16",
+        "bf16",
         str(script),
         "--data-root",
         str(data),
         "--output-dir",
         str(output),
         "--mel-cache",
-        str(WORK / "emotion_mel_cache"),
+        str(TMP_WORK / "emotion_mel_cache"),
         "--epochs",
-        "6" if MODE == "smoke" else "20",
+        "6" if MODE == "smoke" else "10",
         "--max-steps",
         "50" if MODE == "smoke" else "0",
+        "--max-seconds",
+        max_seconds,
         "--learning-rate",
         "2e-4",
         "--accumulation",
@@ -322,13 +521,11 @@ def train(code: Path, base: Path | None, data: Path) -> Path:
         "2",
         "--eval-batch-size",
         "1",
-        # Windows spawn pickles the dataset; keep workers at 0 for the smoke run
-        # so the mel extractor survives into worker processes.
         "--num-workers",
         "0" if MODE == "smoke" else "2",
         "--gradient-checkpointing",
         "--mixed-precision",
-        "fp16",
+        "bf16",
         "--save-every",
         "25" if MODE == "smoke" else "200",
         "--log-every",
@@ -358,23 +555,71 @@ def train(code: Path, base: Path | None, data: Path) -> Path:
     if base is not None:
         env["SAMVYAS_INDICF5_DIR"] = str(base)
     subprocess.run(command, check=True, env=env)
+    _copy_manifest_metadata(data, output)
     return output
 
 
+def evaluate(code: Path, base: Path | None, data: Path, jeet: Path, output: Path) -> None:
+    """Synthesize the fixed 5 unseen Bengali sentences x 4 tags x (32,16,8) steps grid."""
+    best_adapter = output / "best" / "adapter.safetensors"
+    last_adapter = output / "last" / "adapter.safetensors"
+    adapter = best_adapter if best_adapter.is_file() else last_adapter
+    eval_dir = output / "eval_unseen"
+    script = code / "scripts" / "evaluate_emotion_lora.py"
+    command = [
+        sys.executable,
+        str(script),
+        "--adapter",
+        str(adapter),
+        "--data-root",
+        str(data),
+        "--jeet-root",
+        str(jeet),
+        "--mode",
+        "unseen",
+        "--steps",
+        "32,16,8",
+        "--output-dir",
+        str(eval_dir),
+    ]
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(code),
+        "CUDA_VISIBLE_DEVICES": "0",
+    }
+    if base is not None:
+        env["SAMVYAS_INDICF5_DIR"] = str(base)
+    print(f"Running unseen evaluation with adapter {adapter}...", flush=True)
+    subprocess.run(command, check=True, env=env)
+
+
 def main() -> None:
-    """Prepare data, train on two GPUs, and package the resumable output."""
-    token = secret("HF_TOKEN")
+    """Prepare data, train on two GPUs, evaluate unseen audio, and package the bundle."""
+    _disk_report("startup")
+    token = secret("HF_TOKEN") or os.environ.get("HF_TOKEN") or os.environ.get("HF_ACESS_TOKEN")
     if token:
         os.environ["HF_TOKEN"] = token
+    if (
+        MODE == "full"
+        and not token
+        and env_dir("NEUTRAL_DIR") is None
+        and find_input("indicvoices") is None
+    ):
+        raise SystemExit(
+            "HF_TOKEN secret is missing for full mode. Attach HF_TOKEN in Kaggle Notebook Secrets "
+            "or provide NEUTRAL_DIR."
+        )
     base = find_local_base()
     if base is not None:
         os.environ["SAMVYAS_INDICF5_DIR"] = str(base)
         print("Local IndicF5 base:", base, flush=True)
     elif not os.environ.get("HF_TOKEN"):
         print("No local base or HF_TOKEN; the gated HF download may fail.", flush=True)
+
+    jeet = resolve_jeet_dir()
     code = clone_code()
     install(code)
-    data = prepare_data(code, base)
+    data = prepare_data(code, base, jeet)
     output = train(code, base, data)
     report_path = output / "training_report.json"
     if report_path.is_file():
@@ -382,7 +627,10 @@ def main() -> None:
     last_adapter = output / "last" / "adapter.safetensors"
     if not last_adapter.is_file():
         raise SystemExit(f"Training did not produce a last adapter: {last_adapter}")
+
+    evaluate(code, base, data, jeet, output)
     archive = shutil.make_archive(str(WORK / f"emotion_lora_{MODE}_bundle"), "zip", output)
+    _disk_report("finished")
     print("Bundle:", archive, flush=True)
     print("Last adapter:", last_adapter, flush=True)
     print("Download the bundle before the Kaggle session ends.", flush=True)

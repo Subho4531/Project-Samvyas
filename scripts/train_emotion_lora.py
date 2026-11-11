@@ -45,6 +45,7 @@ def main() -> None:
     parser.add_argument("--resume", type=Path, default=None)
     parser.add_argument("--patience", type=int, default=5)
     parser.add_argument("--max-steps", type=int, default=0)
+    parser.add_argument("--max-seconds", type=float, default=0.0)
     parser.add_argument("--log-every", type=int, default=10)
     parser.add_argument("--save-every", type=int, default=100)
     parser.add_argument("--grad-clip", type=float, default=1.0)
@@ -84,6 +85,7 @@ def main() -> None:
         resume=args.resume,
         patience=args.patience,
         max_steps=args.max_steps,
+        max_seconds=args.max_seconds,
         log_every=args.log_every,
         save_every=args.save_every,
         grad_clip=args.grad_clip,

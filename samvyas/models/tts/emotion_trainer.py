@@ -64,6 +64,7 @@ class EmotionTrainingConfig:
     resume: Path | None = None
     patience: int = 5
     max_steps: int = 0
+    max_seconds: float = 0.0
     log_every: int = 10
     save_every: int = 100
     grad_clip: float = 1.0
@@ -89,8 +90,8 @@ class EmotionTrainingConfig:
             raise ValueError("mixed_precision must be no, fp16, or bf16.")
         if not 0 <= self.lora_dropout < 1 or not 0 <= self.tag_dropout < 1:
             raise ValueError("Dropout values must be in [0, 1).")
-        if self.save_every < 0 or self.log_every < 1:
-            raise ValueError("save_every must be nonnegative and log_every positive.")
+        if self.save_every < 0 or self.log_every < 1 or self.max_seconds < 0:
+            raise ValueError("save_every/max_seconds must be nonnegative and log_every positive.")
 
 
 def _atomic_torch_save(value: Any, path: Path) -> None:
@@ -217,6 +218,18 @@ def _validate(
     return float(value)
 
 
+def _time_budget_reached(accelerator: Accelerator, started: float, max_seconds: float) -> bool:
+    """Broadcast rank-0 wall-clock exhaustion so all DDP ranks exit cleanly together."""
+    if max_seconds <= 0:
+        return False
+    flag = torch.tensor(
+        [1 if (accelerator.is_main_process and (time.time() - started) >= max_seconds) else 0],
+        device=accelerator.device,
+        dtype=torch.int64,
+    )
+    return int(accelerator.gather(flag).max().item()) > 0
+
+
 def train_emotion(
     model: EmotionCFM,
     train_dataset: EmotionPairDataset,
@@ -341,6 +354,8 @@ def train_emotion(
     stale = 0
     started = time.time()
     stop = False
+    time_stopped = False
+    time_check_interval = min(20, max(1, config.log_every))
     for epoch in range(start_epoch, config.epochs):
         if hasattr(train_loader.batch_sampler, "set_epoch"):
             train_loader.batch_sampler.set_epoch(epoch)
@@ -403,6 +418,14 @@ def train_emotion(
                     if config.max_steps and global_step >= config.max_steps:
                         stop = True
                         break
+                    if (
+                        config.max_seconds > 0
+                        and global_step % time_check_interval == 0
+                        and _time_budget_reached(accelerator, started, config.max_seconds)
+                    ):
+                        stop = True
+                        time_stopped = True
+                        break
             if stop:
                 break
         value = _validate(model, valid_loader, accelerator)
@@ -455,6 +478,21 @@ def train_emotion(
             )
         if config.max_steps and global_step >= config.max_steps:
             break
+        if time_stopped or _time_budget_reached(accelerator, started, config.max_seconds):
+            time_stopped = True
+            if accelerator.is_main_process:
+                print(
+                    json.dumps(
+                        {
+                            "time_budget_stop": True,
+                            "epoch": epoch + 1,
+                            "steps": global_step,
+                            "elapsed_seconds": round(time.time() - started, 1),
+                        }
+                    ),
+                    flush=True,
+                )
+            break
         if config.patience > 0 and stale >= config.patience:
             if accelerator.is_main_process:
                 print(json.dumps({"early_stop": True, "epoch": epoch + 1}), flush=True)
@@ -498,6 +536,8 @@ def train_emotion(
         "accumulation": config.accumulation,
         "gradient_checkpointing": config.gradient_checkpointing,
         "seed": config.seed,
+        "max_seconds": config.max_seconds,
+        "stopped_on_time_budget": time_stopped,
         "listening_review": "pending; loss does not measure emotional or voice quality",
         **config.metadata,
     }

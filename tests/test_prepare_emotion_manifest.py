@@ -153,3 +153,104 @@ def test_jeet_replay_duplicates_train_targets_only(tmp_path: Path) -> None:
         mel_fn=lambda waveform: torch.ones(1, 100, max(1, waveform.shape[-1] // 256)),
     )
     assert len(dataset) == 8
+
+
+def test_subesco_disambiguates_male_female_speaker_id_and_filters_labels(tmp_path: Path) -> None:
+    """SUBESCO integer speaker_id values 1..10 collide across genders unless disambiguated."""
+    source = tmp_path / "subesco_src"
+    rows = []
+    # Female speaker 1 (OISHI) and Male speaker 1 (BASHIR) plus Female speaker 2 (for holdout)
+    speakers = [
+        ("Female", 1, "OISHI"),
+        ("Male", 1, "BASHIR"),
+        ("Female", 2, "MITA"),
+    ]
+    kept_labels = {0: "angry", 3: "happy", 4: "neutral", 5: "sad"}
+    dropped_labels = {1: "disgust", 2: "fear", 6: "surprise"}
+    for gender, sp_id, sp_name in speakers:
+        for sentence in ("S_1", "S_2"):
+            for label_int, label_name in {**kept_labels, **dropped_labels}.items():
+                fname = f"{gender[0]}_{sp_id:02d}_{sp_name}_{sentence}_{label_name.upper()}_1.wav"
+                wav_path = source / "audio" / fname
+                wav_path.parent.mkdir(parents=True, exist_ok=True)
+                sf.write(wav_path, 0.1 * np.sin(np.arange(16000) * 0.02), 16000)
+                rows.append(
+                    {
+                        "file name": fname,
+                        "audio": str(wav_path),
+                        "transcription": "abc def",
+                        "speaker_id": sp_id,
+                        "speaker_name": sp_name,
+                        "speaker_gender": gender,
+                        "sentence_no": sentence,
+                        "label": label_int,
+                    }
+                )
+    (source / "metadata.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8"
+    )
+    output = tmp_path / "bundle"
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_emotion_manifest.py",
+            "--subesco",
+            str(source),
+            "--output-dir",
+            str(output),
+            "--holdout-speakers",
+            "1",
+            "--holdout-sentences",
+            "1",
+            "--limit-neutral-hours",
+            "0",
+        ],
+        check=True,
+        cwd=Path(__file__).resolve().parents[1],
+    )
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    # 3 speakers x 2 sentences x 4 kept emotions = 24 clips; 3x2x3 = 18 unsupported emotion skips
+    assert report["clips"] == 24
+    assert report["skipped"]["subesco"]["unsupported emotion"] == 18
+    assert len(report["splits"]["sources"]["subesco"]["holdout_speakers"]) == 1
+    clips = [
+        json.loads(line)
+        for line in (output / "clips.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    speaker_ids = {clip["speaker_id"] for clip in clips}
+    assert speaker_ids == {
+        "subesco:Female_1_OISHI",
+        "subesco:Male_1_BASHIR",
+        "subesco:Female_2_MITA",
+    }
+    for split in ("train.jsonl", "validation.jsonl"):
+        for line in (output / split).read_text(encoding="utf-8").splitlines():
+            pair = json.loads(line)
+            assert pair["prompt_speaker_id"] == pair["speaker_id"]
+
+
+def test_filter_pair_durations_drops_text_exceeding_mel_frames() -> None:
+    """Pairs whose combined text exceeds estimated mel frames are dropped before training."""
+    from scripts.prepare_emotion_manifest import _filter_pair_durations
+
+    kept, dropped = _filter_pair_durations(
+        [
+            {
+                "clip_id": "ok",
+                "duration": 2.0,
+                "prompt_duration": 2.0,
+                "text": "abc",
+                "prompt_text": "def",
+            },
+            {
+                "clip_id": "too_long_text",
+                "duration": 1.0,
+                "prompt_duration": 1.0,
+                "text": "x" * 200,
+                "prompt_text": "y" * 200,
+            },
+        ],
+        max_total_seconds=19.0,
+    )
+    assert [row["clip_id"] for row in kept] == ["ok"]
+    assert dropped == 1

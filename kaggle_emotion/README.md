@@ -8,23 +8,20 @@ loss = flow matching on target frames only
 trainable = LoRA on to_q/to_k/to_v/to_out.0/ff.ff.0.0/ff.ff.2 + 4 tag rows + null row
 ```
 
-`run.py` starts with `nvidia-smi`, requires exactly two T4s, clones the repo,
+`run.py` starts with `nvidia-smi`, requires two T4s, clones the repo into `/tmp`,
 installs the TTS-only dependencies, builds a portable manifest, launches
-`accelerate --multi_gpu --num_processes 2 --mixed_precision fp16`, and packages
-the resumable `last` adapter.
+`accelerate --multi_gpu --num_processes 2 --mixed_precision bf16`, runs the
+fixed 5-sentence unseen-text evaluation grid (`32, 16, 8` ODE steps), and
+packages checkpoints + evaluation audio into a single bundle zip.
 
-## First run: 50-step smoke test
+## Smoke run override (`SAMVYAS_MODE=smoke`)
 
-The default mode is `smoke`. It uses only the existing private Jeet v2 dataset,
-so it does not need SUBESCO or IndicVoices-R yet. It runs 50 optimizer steps
-over up to 6 epochs (two-process sharding plus four gradient-accumulation
-microbatches per step) and validates the data path, DDP, fp16, gradient
-checkpointing, adapter export, and resume state.
+Set `SAMVYAS_MODE=smoke` to run a 50-step Jeet-only sanity check (6 epochs max,
+two-process sharding plus four gradient-accumulation microbatches per step)
+without fetching SUBESCO or IndicVoices-R.
 
-1. Push the scaffold to GitHub. `run.py` clones `SAMVYAS_REPO` at
-   `SAMVYAS_COMMIT` (default `main`). Alternatively, upload the repository as a
-   private Kaggle code dataset; `run.py` auto-detects
-   `scripts/train_emotion_lora.py`, or set `SAMVYAS_CODE_DIR` to its root.
+1. Push changes to GitHub (`SAMVYAS_REPO` at `SAMVYAS_COMMIT`, default `main`),
+   or attach the repo as a private Kaggle dataset.
 2. Check `kernel-metadata.json`; the `id` must match your Kaggle account.
 3. Push the kernel:
 
@@ -34,30 +31,30 @@ checkpointing, adapter export, and resume state.
    .\.venv-kaggle\Scripts\kaggle.exe kernels logs jeet065/samvyas-indicf5-emotion-lora
    ```
 
-4. Download `emotion_lora_smoke_bundle.zip` from the kernel output before the
+4. Download `emotion_lora_full_bundle.zip` from the kernel output before the
    12-hour session ends. Kaggle `/kaggle/working` does not survive forever.
 
 `run.py` launches `accelerate --multi_gpu --num_processes 2 --mixed_precision
 bf16`. IndicF5's own inference path autocasts to bfloat16, and the 22-block DiT
 overflows fp16 (NaN validation loss at step 0), so bf16 is used for training
-and evaluation alike. The smoke run also uses `--num-workers 0` because
-Windows spawn pickles the dataset.
+and evaluation alike.
 
-## Full run
+## Full run (default: `SAMVYAS_MODE=full`)
 
-1. Accept the `ai4bharat/IndicF5` access conditions and add `HF_TOKEN` as a
-   Kaggle Secret if the model is not attached as a local model source.
-2. Upload the official CC BY 4.0 SUBESCO parquet bundle as a private dataset.
-3. Upload the curated IndicVoices-R Bengali neutral slice as a private dataset
-   (JSONL/CSV/parquet with audio, text, speaker_id, sentence_id, duration).
-4. Add both dataset sources to `kernel-metadata.json` and set
-   `SAMVYAS_MODE=full` in the kernel environment (Kaggle: **Settings → Environment
-   variables**, or edit the default in `run.py`).
-5. The manifest builder keeps at most 5 neutral hours, holds out 2 speakers and
-   1 sentence per speaker, writes 80% neutral prompts, and filters pairs above
-   19 seconds total.
-6. Re-push the kernel. The trainer resumes from `last/trainer_state.pt` when
-   the working directory still has it.
+1. Accept `ai4bharat/IndicF5` and `ai4bharat/indicvoices_r` access conditions on
+   Hugging Face, and enable the `HF_TOKEN` secret on the Kaggle kernel.
+2. In `full` mode, `run.py` automatically downloads `sajid73/SUBESCO-audio-dataset`
+   (`data/*.parquet`) and strided `ai4bharat/indicvoices_r` Bengali shards
+   (`Bengali/train-*.parquet`, stopping around 6.5 pairable hours / >= 12 speakers)
+   into `/tmp`, builds the manifest with `--limit-neutral-hours 5 --holdout-speakers 2
+   --holdout-sentences 1 --neutral-prompt-ratio 0.8 --jeet-replay 8`, and deletes
+   the raw 48 kHz parquet downloads before training begins.
+3. Training runs up to 10 epochs (with early stopping `--patience 5` and a 9.5h
+   wall-clock cap `--max-seconds 34200` so DDP exits cleanly in time for evaluation
+   and zipping before Kaggle's 12-hour timeout).
+4. After training, `scripts/evaluate_emotion_lora.py --mode unseen --steps 32,16,8`
+   synthesizes 5 unseen Bengali sentences across `<neutral>/<happy>/<sad>/<angry>`
+   conditioned on Jeet's canonical neutral clip.
 
 Dataset paths can be overridden with `JEET_DIR`, `SUBESCO_DIR`, `NEUTRAL_DIR`,
 `SAMVYAS_DATA_DIR`, `SAMVYAS_CODE_DIR`, and `SAMVYAS_INDICF5_DIR`.
@@ -65,15 +62,17 @@ Dataset paths can be overridden with `JEET_DIR`, `SUBESCO_DIR`, `NEUTRAL_DIR`,
 ## Outputs
 
 ```text
-/kaggle/working/emotion_lora_smoke/
+/kaggle/working/emotion_lora_full/
+  best/adapter.safetensors
   last/adapter.safetensors
   last/adapter.json
   last/trainer_state.pt
-  best/...
-  step_0000025/...
+  step_0000200/...
   history.json
   training_report.json
-/kaggle/working/emotion_lora_smoke_bundle.zip
+  manifest_metadata/{report.json,clips.jsonl,train.jsonl,validation.jsonl}
+  eval_unseen/{evaluation_report.json,listening_review.jsonl,audio/*_{24k,16k}.wav}
+/kaggle/working/emotion_lora_full_bundle.zip
 ```
 
 `training_report.json` explicitly marks listening review as pending. Loss values

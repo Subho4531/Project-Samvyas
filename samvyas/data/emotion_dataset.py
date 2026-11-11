@@ -135,23 +135,34 @@ def _load_audio_24k(path: Path) -> Tensor:
     return waveform
 
 
+class _VocosMelExtractor:
+    """Module-level callable so it survives multiprocessing pickling.
+
+    IndicF5 uses a 100-bin Vocos mel; this mirrors
+    ``f5_tts.model.modules.MelSpec`` exactly.  Defined at module scope because
+    ``num_workers > 0`` pickles the dataset (and its ``mel_fn``) into worker
+    processes on Windows spawn.
+    """
+
+    def __init__(self) -> None:
+        from f5_tts.model.modules import MelSpec
+
+        self.mel = MelSpec(
+            n_fft=1024,
+            hop_length=HOP_LENGTH,
+            win_length=1024,
+            n_mel_channels=100,
+            target_sample_rate=MODEL_SAMPLE_RATE,
+            mel_spec_type="vocos",
+        )
+
+    def __call__(self, waveform: Tensor) -> Tensor:
+        return self.mel(waveform)
+
+
 def _default_mel_fn() -> Callable[[Tensor], Tensor]:
-    """Build the same Vocos-compatible mel extractor used by IndicF5."""
-    from f5_tts.model.modules import MelSpec
-
-    mel = MelSpec(
-        n_fft=1024,
-        hop_length=HOP_LENGTH,
-        win_length=1024,
-        n_mel_channels=100,
-        target_sample_rate=MODEL_SAMPLE_RATE,
-        mel_spec_type="vocos",
-    )
-
-    def extract(waveform: Tensor) -> Tensor:
-        return mel(waveform)
-
-    return extract
+    """Return the same Vocos-compatible 100-bin mel extractor used by IndicF5."""
+    return _VocosMelExtractor()
 
 
 class EmotionPairDataset(Dataset[dict[str, Any]]):

@@ -122,3 +122,25 @@ def test_validation_gather_sums_all_rank_totals() -> None:
     value = _validate(FakeModel(), [batch], FakeAccelerator())
     # Local total is [4, 2]; the fake peer adds [100, 2].
     assert value == pytest.approx(104.0 / 4.0)
+
+
+def test_trainer_stops_cleanly_on_time_budget(tmp_path: Path) -> None:
+    """Exhausting max_seconds stops after saving last/best checkpoints and report."""
+    train, valid = _datasets(tmp_path)
+    model, _ = make_tiny_model()
+    report = train_emotion(
+        model,
+        train,
+        valid,
+        _config(
+            tmp_path,
+            tmp_path / "run_budget",
+            epochs=5,
+            max_steps=0,
+            max_seconds=0.0001,
+        ),
+    )
+    assert report["stopped_on_time_budget"] is True
+    assert report["steps"] >= 1
+    assert (tmp_path / "run_budget" / "last" / "adapter.safetensors").is_file()
+    assert (tmp_path / "run_budget" / "training_report.json").is_file()
