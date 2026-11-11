@@ -10,12 +10,14 @@ The script starts with nvidia-smi and fails unless exactly two GPUs are visible.
 
 from __future__ import annotations
 
+import importlib
 import json
 import math
 import os
 import shutil
 import subprocess
 import sys
+import textwrap
 import time
 from collections import Counter
 from pathlib import Path
@@ -233,11 +235,16 @@ def install(code: Path) -> None:
             ],
             check=True,
         )
+    importlib.invalidate_caches()
     subprocess.run(
         [
             sys.executable,
             "-c",
-            "import f5_tts, accelerate, safetensors, pyarrow, librosa, sklearn; print('tts+eval deps ok')",
+            (
+                "import f5_tts, accelerate, safetensors, pyarrow, librosa, sklearn; "
+                "from huggingface_hub import HfApi, hf_hub_download, snapshot_download; "
+                "print('tts+eval deps ok')"
+            ),
         ],
         check=True,
     )
@@ -595,30 +602,53 @@ def evaluate(code: Path, base: Path | None, data: Path, jeet: Path, output: Path
 
 
 def _verify_indicvoices_access(token: str) -> None:
-    """Fail fast before pip install if HF_TOKEN cannot read gated IndicVoices-R shards."""
-    try:
-        from huggingface_hub import get_hf_file_metadata, hf_hub_url
-    except ImportError:
-        return
-    probe_url = hf_hub_url(
-        repo_id="ai4bharat/indicvoices_r",
-        filename="Bengali/train-00000-of-00155.parquet",
-        repo_type="dataset",
+    """Fail fast before pip install via a subprocess so sys.modules stays uncached."""
+    probe = textwrap.dedent(
+        """\
+        import os, sys
+        try:
+            from huggingface_hub import get_hf_file_metadata, hf_hub_url
+        except ImportError:
+            sys.exit(0)
+        url = hf_hub_url(
+            repo_id='ai4bharat/indicvoices_r',
+            filename='Bengali/train-00000-of-00155.parquet',
+            repo_type='dataset',
+        )
+        try:
+            meta = get_hf_file_metadata(url, token=os.environ.get('HF_TOKEN'))
+            print(f'Verified IndicVoices-R gated access (probe size={meta.size}).', flush=True)
+        except Exception as exc:
+            status = getattr(getattr(exc, 'response', None), 'status_code', None)
+            if status in (401, 403) or 'gated' in type(exc).__name__.lower() or '403' in str(exc):
+                print(f'GATED_ACCESS_DENIED:{status or 403}', flush=True)
+                sys.exit(43)
+            raise
+        """
     )
-    try:
-        meta = get_hf_file_metadata(probe_url, token=token)
-        print(f"Verified IndicVoices-R gated access (probe size={meta.size}).", flush=True)
-    except Exception as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        if status in (401, 403) or "gated" in type(exc).__name__.lower() or "403" in str(exc):
-            raise SystemExit(
-                "HF_TOKEN lacks access to gated dataset ai4bharat/indicvoices_r (HTTP "
-                f"{status or 403}). Visit https://huggingface.co/datasets/ai4bharat/indicvoices_r "
-                "signed in as your HF account, click 'Agree and access repository', and ensure "
-                "fine-grained tokens allow 'Read access to contents of all public gated repos "
-                "you can access'."
-            ) from exc
-        raise
+    probe_env = {**os.environ, "HF_TOKEN": token}
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        env=probe_env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stdout:
+        print(result.stdout.strip(), flush=True)
+    if result.returncode == 43:
+        raise SystemExit(
+            "HF_TOKEN lacks access to gated dataset ai4bharat/indicvoices_r (HTTP 401/403). "
+            "Visit https://huggingface.co/datasets/ai4bharat/indicvoices_r signed in as your "
+            "HF account, click 'Agree and access repository', and ensure fine-grained tokens "
+            "allow 'Read access to contents of all public gated repos you can access'."
+        )
+    if result.returncode != 0:
+        if result.stderr:
+            print(result.stderr.strip(), file=sys.stderr, flush=True)
+        raise SystemExit(
+            f"IndicVoices-R preflight check failed with exit code {result.returncode}."
+        )
 
 
 def main() -> None:
